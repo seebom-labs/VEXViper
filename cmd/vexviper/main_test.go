@@ -98,6 +98,23 @@ func TestGenerateCommand(t *testing.T) {
 	if code != 0 || !strings.Contains(stderr.String(), "findings assessed: 0 (skipped: 2, re-assessed: 0)") {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
+
+	// --regenerate revisits the under_investigation finding but keeps the
+	// settled not_affected one (no provider tokens spent on it).
+	stderr.Reset()
+	code = run([]string{"generate", "--config", cfg, "--sbom", sbomID, "--out", "-", "--regenerate", "--log-level", "error"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stderr.String(), "findings assessed: 1 (skipped: 1, re-assessed: 0)") ||
+		!strings.Contains(stderr.String(), "settled verdicts kept: 1") {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+
+	// --force is the hard regenerate: everything is re-assessed.
+	stderr.Reset()
+	code = run([]string{"generate", "--config", cfg, "--sbom", sbomID, "--out", "-", "--force", "--log-level", "error"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stderr.String(), "findings assessed: 2 (skipped: 0, re-assessed: 0)") ||
+		strings.Contains(stderr.String(), "settled verdicts kept") {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
 }
 
 func TestGenerateErrors(t *testing.T) {

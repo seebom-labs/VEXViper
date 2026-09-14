@@ -316,6 +316,25 @@ func TestGenerateVEX(t *testing.T) {
 	}
 }
 
+func TestGenerateVEXRegenerateAndForce(t *testing.T) {
+	s := newSession(t)
+	var out generateOut
+	// GO-2025-0002 is not_affected: regenerate keeps it, force re-assesses it.
+	if res := s.call(t, "generate_vex", map[string]any{"sbom": "s1", "regenerate": true}, &out); res.IsError {
+		t.Fatal(errText(res))
+	}
+	if out.Findings != 1 || out.Skipped != 1 || out.Settled != 1 {
+		t.Fatalf("regenerate: %+v", out)
+	}
+	out = generateOut{}
+	if res := s.call(t, "generate_vex", map[string]any{"sbom": "s1", "force": true}, &out); res.IsError {
+		t.Fatal(errText(res))
+	}
+	if out.Findings != 2 || out.Skipped != 0 || out.Settled != 0 {
+		t.Fatalf("force: %+v", out)
+	}
+}
+
 func TestHTTPHandler(t *testing.T) {
 	s := newSession(t)
 	cfg := config.Default()

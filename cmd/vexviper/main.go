@@ -144,7 +144,8 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	out := fs.String("out", "", "output directory for <name>.vexviper.openvex.json (default from config; \"-\" disables the file)")
 	toStdout := fs.Bool("stdout", false, "also print the document to stdout")
 	upload := fs.Bool("upload", false, "upload the document to BOMHort (needs api key)")
-	regenerate := fs.Bool("regenerate", false, "also assess findings that already carry a vex_status")
+	regenerate := fs.Bool("regenerate", false, "also re-assess findings that already carry a vex_status, except settled ones (not_affected, fixed)")
+	force := fs.Bool("force", false, "hard regenerate: re-assess every finding, including not_affected/fixed (implies --regenerate)")
 	only := fs.String("only", "", "comma-separated vuln IDs to restrict to")
 	wait := fs.Duration("wait", 0, "after --upload, wait up to this long for BOMHort to ingest the document")
 	reassess := fs.Duration("reassess-after", -1, "re-assess under_investigation/affected findings whose statement is older than this (default from config watch.reassess_after; 0 disables)")
@@ -176,7 +177,8 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		ReassessAfter: cfg.Watch.ReassessAfter,
 		OutDir:        outDir,
 		Upload:        *upload || cfg.VEX.Upload,
-		Regenerate:    *regenerate || cfg.VEX.Regenerate,
+		Regenerate:    *regenerate || *force || cfg.VEX.Regenerate,
+		Force:         *force,
 	}
 	if *only != "" {
 		opts.Only = strings.Split(*only, ",")
@@ -216,6 +218,9 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 func printSummary(w io.Writer, res *pipeline.Outcome) {
 	fmt.Fprintf(w, "\nVEXViper summary for SBOM %s (%s)\n", res.Product.SBOMID, res.Product.DocumentName)
 	fmt.Fprintf(w, "  findings assessed: %d (skipped: %d, re-assessed: %d)\n", res.Findings, res.Skipped, res.Reassessed)
+	if res.Settled > 0 {
+		fmt.Fprintf(w, "  settled verdicts kept: %d (not_affected/fixed; use --force to re-assess)\n", res.Settled)
+	}
 	if res.RepoHow != "" {
 		fmt.Fprintf(w, "  product repo:      %s", res.RepoHow)
 		if res.RepoDir != "" {

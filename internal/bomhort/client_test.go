@@ -202,3 +202,32 @@ func TestRetryAfterFallback(t *testing.T) {
 		t.Fatalf("garbage header = %v", d)
 	}
 }
+
+func TestClientOptionsAndAPIError(t *testing.T) {
+	var gotAuth, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth, gotKey = r.Header.Get("Authorization"), r.Header.Get("X-API-Key")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	c := New(srv.URL+"/", WithServiceToken("svc-token"), WithHTTPClient(hc), WithMaxRetries(0))
+	if c.BaseURL() != srv.URL {
+		t.Fatalf("BaseURL = %q (trailing slash must be trimmed)", c.BaseURL())
+	}
+	if c.http != hc || c.maxRetries != 0 {
+		t.Fatalf("options not applied: http=%p retries=%d", c.http, c.maxRetries)
+	}
+	if err := c.Healthy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer svc-token" || gotKey != "" {
+		t.Fatalf("auth headers = %q / %q", gotAuth, gotKey)
+	}
+
+	e := &APIError{StatusCode: 503, Message: "down"}
+	if e.Error() != "bomhort: HTTP 503: down" {
+		t.Fatalf("Error() = %q", e.Error())
+	}
+}

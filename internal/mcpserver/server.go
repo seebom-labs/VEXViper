@@ -56,7 +56,7 @@ func (s *Server) New() *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_findings", Description: "List the vulnerability findings BOMHort reports for one SBOM (by id, document name or source file). Findings that already carry a vex_status are included with that status."}, s.listFindings)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_repo_context", Description: "Resolve and clone the product's source repository, run govulncheck when it is a Go module and collect deterministic evidence (version comparison, dependency depth, reachability, symbol references, OSV details) for each finding of the SBOM."}, s.getRepoContext)
 	mcp.AddTool(srv, &mcp.Tool{Name: "draft_vex", Description: "Build a validated OpenVEX document from assessments you provide (one per vuln_id+purl). Guardrails downgrade unsupported not_affected/fixed claims to under_investigation. Writes <name>.vexviper.openvex.json to the configured out_dir and returns the document."}, s.draftVEX)
-	mcp.AddTool(srv, &mcp.Tool{Name: "generate_vex", Description: "Run the full VEXViper pipeline for an SBOM with the configured assessment provider (heuristic/openai/mcptool) and optionally upload to BOMHort."}, s.generateVEX)
+	mcp.AddTool(srv, &mcp.Tool{Name: "generate_vex", Description: "Run the full VEXViper pipeline for an SBOM with the configured assessment provider (heuristic/openai/github/copilot/mcptool) and optionally upload to BOMHort. By default findings that already carry a vex_status are skipped; regenerate=true re-assesses them except settled verdicts (not_affected/fixed); force=true re-assesses everything."}, s.generateVEX)
 	mcp.AddTool(srv, &mcp.Tool{Name: "upload_vex", Description: "Upload an OpenVEX document (inline JSON or a path returned by draft_vex/generate_vex) to BOMHort's /api/v1/sboms/upload endpoint."}, s.uploadVEX)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_vex_statements", Description: "List the VEX statements BOMHort has ingested (to verify an upload was applied)."}, s.listVEXStatements)
 	return srv
@@ -311,22 +311,24 @@ type generateIn struct {
 	Repo       string `json:"repo,omitempty"`
 	Upload     bool   `json:"upload,omitempty"`
 	Regenerate bool   `json:"regenerate,omitempty"`
+	Force      bool   `json:"force,omitempty"`
 }
 
 type generateOut struct {
 	docOut
 	Findings    int                         `json:"findings"`
 	Skipped     int                         `json:"skipped"`
+	Settled     int                         `json:"settled,omitempty"`
 	RepoURL     string                      `json:"repo_url,omitempty"`
 	Assessments []pipeline.AssessmentRecord `json:"assessments"`
 }
 
 func (s *Server) generateVEX(ctx context.Context, _ *mcp.CallToolRequest, in generateIn) (*mcp.CallToolResult, generateOut, error) {
-	o, err := s.Pipeline.Run(ctx, pipeline.RunOptions{SBOMRef: in.SBOM, RepoOverride: in.Repo, OutDir: s.Pipeline.Cfg.VEX.OutDir, Upload: in.Upload, Regenerate: in.Regenerate})
+	o, err := s.Pipeline.Run(ctx, pipeline.RunOptions{SBOMRef: in.SBOM, RepoOverride: in.Repo, OutDir: s.Pipeline.Cfg.VEX.OutDir, Upload: in.Upload, Regenerate: in.Regenerate || in.Force, Force: in.Force})
 	if err != nil {
 		return nil, generateOut{}, err
 	}
-	out := generateOut{Findings: o.Findings, Skipped: o.Skipped, RepoURL: o.RepoHow, Assessments: o.Assessments}
+	out := generateOut{Findings: o.Findings, Skipped: o.Skipped, Settled: o.Settled, RepoURL: o.RepoHow, Assessments: o.Assessments}
 	out.Filename, out.Path, out.Document, out.Guardrails = o.Filename, o.Path, toMap(o.Document), o.Guardrails
 	out.Counts = map[string]int{}
 	for k, v := range o.Counts {

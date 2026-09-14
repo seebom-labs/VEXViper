@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -166,18 +167,22 @@ func TestRunWritesDocumentAndUploads(t *testing.T) {
 	}
 }
 
-func TestRunRegenerateOnlyAndOverride(t *testing.T) {
+func TestRunForceOnlyAndOverride(t *testing.T) {
 	bh := bomhortFixture(t)
 	mock := &llm.Mock{Default: &llm.Assessment{Status: vex.StatusUnderInvestigation, Confidence: 0.5}}
 	cl := &fakeCloner{dir: t.TempDir()}
 	p := newTestPipeline(t, bh, mock, cl)
 
-	out, err := p.Run(context.Background(), RunOptions{SBOMRef: ".", Regenerate: true, Only: []string{"go-2025-0003"}, RepoOverride: "acme/product"})
+	// GO-2025-0003 is not_affected: only Force re-assesses it.
+	out, err := p.Run(context.Background(), RunOptions{SBOMRef: ".", Regenerate: true, Force: true, Only: []string{"go-2025-0003"}, RepoOverride: "acme/product"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Findings != 1 || out.Skipped != 2 {
-		t.Fatalf("findings=%d skipped=%d", out.Findings, out.Skipped)
+	if out.Findings != 1 || out.Skipped != 2 || out.Settled != 0 {
+		t.Fatalf("findings=%d skipped=%d settled=%d", out.Findings, out.Skipped, out.Settled)
+	}
+	if len(mock.Calls) != 1 || mock.Calls[0].Report.Finding.VulnID != "GO-2025-0003" {
+		t.Fatalf("provider calls = %d", len(mock.Calls))
 	}
 	if cl.locs[0].URL != "https://github.com/acme/product" || cl.locs[0].How != "flag" {
 		t.Fatalf("override not preferred: %+v", cl.locs[0])
@@ -477,5 +482,109 @@ func TestFindGoBin(t *testing.T) {
 	t.Setenv("GOROOT", root)
 	if got := findGoBin(); got != filepath.Join(root, "bin") {
 		t.Fatalf("GOROOT not preferred: %q", got)
+	}
+}
+
+// TestRunRegenerateKeepsSettledVerdicts: --regenerate must not spend provider
+// tokens on findings whose verdict is already final (not_affected, fixed).
+func TestRunRegenerateKeepsSettledVerdicts(t *testing.T) {
+	bh := bomhortFixture(t)
+	bh.vulns = append(bh.vulns,
+		bomhort.Vulnerability{VulnID: "GO-2025-0004", PURL: "pkg:golang/github.com/a/b@v1.0.0", Severity: "LOW", VEXStatus: "fixed"},
+		bomhort.Vulnerability{VulnID: "GO-2025-0005", PURL: "pkg:golang/github.com/c/d@v1.0.0", Severity: "LOW", VEXStatus: "under_investigation"},
+		bomhort.Vulnerability{VulnID: "GO-2025-0006", PURL: "pkg:golang/github.com/e/f@v1.0.0", Severity: "HIGH", VEXStatus: "affected"},
+	)
+	mock := &llm.Mock{Default: &llm.Assessment{Status: vex.StatusUnderInvestigation, Confidence: 0.5}}
+	p := newTestPipeline(t, bh, mock, nil)
+
+	// Default run: everything with a vex_status is skipped.
+	out, err := p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Findings != 2 || out.Skipped != 4 || out.Settled != 0 || len(mock.Calls) != 2 {
+		t.Fatalf("default: findings=%d skipped=%d settled=%d calls=%d", out.Findings, out.Skipped, out.Settled, len(mock.Calls))
+	}
+
+	// Regenerate: under_investigation/affected are re-assessed, not_affected/fixed kept.
+	mock.Calls = nil
+	out, err = p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Regenerate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Findings != 4 || out.Skipped != 2 || out.Settled != 2 {
+		t.Fatalf("regenerate: findings=%d skipped=%d settled=%d", out.Findings, out.Skipped, out.Settled)
+	}
+	for _, c := range mock.Calls {
+		if c.Report.Finding.VulnID == "GO-2025-0003" || c.Report.Finding.VulnID == "GO-2025-0004" {
+			t.Fatalf("settled finding %s was sent to the provider", c.Report.Finding.VulnID)
+		}
+	}
+
+	// Force: hard regenerate touches everything.
+	mock.Calls = nil
+	out, err = p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Regenerate: true, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Findings != 6 || out.Skipped != 0 || out.Settled != 0 || len(mock.Calls) != 6 {
+		t.Fatalf("force: findings=%d skipped=%d settled=%d calls=%d", out.Findings, out.Skipped, out.Settled, len(mock.Calls))
+	}
+
+	// Force alone (without Regenerate) behaves the same.
+	mock.Calls = nil
+	out, err = p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Findings != 6 || len(mock.Calls) != 6 {
+		t.Fatalf("force only: findings=%d calls=%d", out.Findings, len(mock.Calls))
+	}
+}
+
+func TestProductName(t *testing.T) {
+	cases := []struct {
+		in   source.Product
+		want string
+	}{
+		{source.Product{SBOMID: "id", DocumentName: "my-app", SourceFile: "f.json"}, "my-app"},
+		{source.Product{SBOMID: "id", DocumentName: ".", SourceFile: "f.json"}, "f.json"},
+		{source.Product{SBOMID: "id", SourceFile: "f.json"}, "f.json"},
+		{source.Product{SBOMID: "id"}, "id"},
+	}
+	for _, c := range cases {
+		if got := productName(c.in); got != c.want {
+			t.Errorf("productName(%+v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestWait(t *testing.T) {
+	p := &Pipeline{}
+	calls := 0
+	lister := func(context.Context) ([]bomhort.VEXStatement, error) {
+		calls++
+		if calls < 2 {
+			return nil, errors.New("transient")
+		}
+		return []bomhort.VEXStatement{{DocumentID: "other"}, {DocumentID: "doc-1"}}, nil
+	}
+	// Found on the second poll (after one 2 s back-off).
+	if err := p.Wait(context.Background(), "doc-1", 10*time.Second, lister); err != nil || calls != 2 {
+		t.Fatalf("Wait: err=%v calls=%d", err, calls)
+	}
+
+	// Timeout: deadline already passed → single poll, then error.
+	err := p.Wait(context.Background(), "missing", 0, func(context.Context) ([]bomhort.VEXStatement, error) { return nil, nil })
+	if err == nil || !strings.Contains(err.Error(), "timeout waiting") {
+		t.Fatalf("expected timeout, got %v", err)
+	}
+
+	// Context cancellation wins over the back-off sleep.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = p.Wait(ctx, "missing", time.Minute, func(context.Context) ([]bomhort.VEXStatement, error) { return nil, nil })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }

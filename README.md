@@ -93,7 +93,10 @@ bin/vexviper mcp-serve --transport http --addr 127.0.0.1:8765       # streamable
 ```
 
 Output filename: `<sbom-name>.vexviper.openvex.json`. Findings that already carry a
-`vex_status` are skipped unless `--regenerate`. `--only CVE-…,GHSA-…` restricts the run.
+`vex_status` are skipped by default. `--regenerate` re-assesses them **except settled
+verdicts** (`not_affected`, `fixed`) — no provider tokens are spent on findings that are
+already closed. `--force` is the hard regenerate that revisits everything.
+`--only CVE-…,GHSA-…` restricts the run.
 
 ### Re-running over time
 
@@ -105,7 +108,7 @@ BOMHort refreshes OSV data but has no notion of "re-triage"; VEXViper owns that:
   each SBOM at least that often and re-assesses `under_investigation` / `affected`
   findings whose newest BOMHort statement is older than the TTL (new evidence: fixed
   versions, govulncheck DB updates, better model). `not_affected` / `fixed` are stable
-  claims and are only revisited with `--regenerate`;
+  claims and are only revisited with `--force`;
 * a new statement for the same `(vuln_id, purl)` supersedes the old one in BOMHort (latest
   `vex_timestamp` wins), so re-runs are idempotent.
 

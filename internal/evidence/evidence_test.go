@@ -347,3 +347,56 @@ func TestCollectNonGoSkipsGovulncheck(t *testing.T) {
 		t.Fatal("ecosystem()")
 	}
 }
+
+func TestFirstLine(t *testing.T) {
+	if got := firstLine("first\nsecond"); got != "first" {
+		t.Fatalf("firstLine = %q", got)
+	}
+	long := strings.Repeat("x", 250)
+	if got := firstLine(long); len([]rune(got)) != 201 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("long line not truncated: %d", len(got))
+	}
+	if got := firstLine("short"); got != "short" {
+		t.Fatalf("firstLine = %q", got)
+	}
+}
+
+// TestExecGovulncheckFallback: when the installed govulncheck was built with
+// an older Go than the module requires, Collector must retry via `go run`
+// (using GoBin when set).
+func TestExecGovulncheckFallback(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	bin := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("govulncheck", `echo 'govulncheck: loading packages: application built with go1.25 requires newer Go version go1.26' >&2; exit 1`)
+	write("go", `echo "$@" > "$0.args"; echo '{"config":{"scanner_name":"fallback"}}'; exit 0`)
+
+	c := &Collector{Govulncheck: filepath.Join(bin, "govulncheck"), GoBin: bin}
+	out, err := c.execGovulncheck(context.Background(), t.TempDir())
+	if err != nil || !strings.Contains(string(out), "fallback") {
+		t.Fatalf("fallback: out=%s err=%v", out, err)
+	}
+	args, _ := os.ReadFile(filepath.Join(bin, "go.args"))
+	if !strings.Contains(string(args), "run "+GovulncheckModule+" -json ./...") {
+		t.Fatalf("go run args = %q", args)
+	}
+
+	// Fallback failing too must surface both errors.
+	write("go", `echo 'go: download failed' >&2; exit 1`)
+	if _, err := c.execGovulncheck(context.Background(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "fallback via go run also failed") {
+		t.Fatalf("expected combined error, got %v", err)
+	}
+
+	// Unrelated failures are not retried.
+	write("govulncheck", `echo 'boom' >&2; exit 2`)
+	write("go", `echo 'must not run' >&2; exit 1`)
+	if _, err := c.execGovulncheck(context.Background(), t.TempDir()); err == nil || strings.Contains(err.Error(), "fallback") {
+		t.Fatalf("unexpected fallback: %v", err)
+	}
+}

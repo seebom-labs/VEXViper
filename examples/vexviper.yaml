@@ -79,6 +79,8 @@ vex:
   out_dir: ./vex
   upload: false                               # push to BOMHort after generation
   regenerate: false                           # also re-assess findings that already have a vex_status
+                                              # (settled not_affected/fixed verdicts are kept; hard
+                                              #  regenerate only via `vexviper generate --force`)
 
 watch:
   interval: 15m
@@ -87,7 +89,7 @@ watch:
   # SBOMs are re-run once their last run is older than this, and findings whose
   # current status is under_investigation or affected get a fresh assessment when
   # BOMHort's newest statement for them is older than this. not_affected / fixed
-  # verdicts are never revisited automatically (use --regenerate). 0 disables.
+  # verdicts are never revisited automatically (use --force). 0 disables.
   reassess_after: 168h   # 7 days
 
 # Upper bound for one SBOM (clone + govulncheck + all assessments).

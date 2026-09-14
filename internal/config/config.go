@@ -179,7 +179,9 @@ type VEX struct {
 	OutDir     string `yaml:"out_dir"`
 	// Upload pushes the generated document to BOMHort.
 	Upload bool `yaml:"upload"`
-	// Regenerate also emits statements for vulns that already carry a vex_status.
+	// Regenerate also re-assesses vulns that already carry a vex_status,
+	// except settled verdicts (not_affected, fixed). A hard regenerate is
+	// only available via `vexviper generate --force`.
 	Regenerate bool `yaml:"regenerate"`
 }
 

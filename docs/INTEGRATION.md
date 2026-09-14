@@ -66,7 +66,8 @@ uses `/api/v1/vex/statements` (`vex_timestamp`) whenever the *newest* verdict ma
 
 * `mode: cronjob` (default) — `vexviper watch --once` every 6 h, state and repo cache on an
   optional PVC. Idempotent: an SBOM is re-processed only when its
-  `vuln_count@ingested_at` fingerprint changes or `--regenerate` is set.
+  `vuln_count@ingested_at` fingerprint changes or `--regenerate` is set. Settled verdicts
+  (`not_affected`, `fixed`) are never re-sent to the provider unless `--force` is used.
 * `mode: deployment` — continuous poller.
 * `mode: mcp` — `mcp-serve --transport http` behind a ClusterIP Service so agents/LLM hosts
   in the cluster can run interactive triage.

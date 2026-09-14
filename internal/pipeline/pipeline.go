@@ -189,14 +189,19 @@ type RunOptions struct {
 	OutDir string
 	// Upload pushes the document to BOMHort.
 	Upload bool
-	// Regenerate includes findings that already have a vex_status.
+	// Regenerate re-assesses findings that already carry a vex_status,
+	// except settled verdicts (not_affected, fixed): re-asking the provider
+	// about those only burns tokens. Use Force to revisit them too.
 	Regenerate bool
+	// Force is a hard regenerate: every finding is re-assessed regardless of
+	// its current status.
+	Force bool
 	// Only restricts to specific vuln IDs (empty = all).
 	Only []string
 	// ReassessAfter re-includes findings whose current VEX status is
 	// under_investigation or affected when BOMHort's newest statement for
 	// them is older than this duration (0 = never). not_affected and fixed
-	// verdicts are only revisited with Regenerate.
+	// verdicts are only revisited with Force.
 	ReassessAfter time.Duration
 }
 
@@ -208,6 +213,9 @@ type Outcome struct {
 	RepoHow  string
 	Findings int
 	Skipped  int
+	// Settled counts skipped findings whose verdict is final (not_affected,
+	// fixed) and was kept although Regenerate was requested.
+	Settled int
 	// Reassessed counts findings included because their statement expired.
 	Reassessed  int
 	Document    []byte
@@ -252,12 +260,18 @@ func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 	stale := p.staleStatements(ctx, res.Findings, opts.ReassessAfter, log)
 	var findings []source.Finding
 	for _, f := range res.Findings {
-		if !opts.Regenerate && f.VEXStatus != "" {
-			if !stale[statementKey(f.VulnID, f.PURL)] {
+		if f.VEXStatus != "" && !opts.Force {
+			switch {
+			case opts.Regenerate && !settled[f.VEXStatus]:
+			case stale[statementKey(f.VulnID, f.PURL)]:
+				out.Reassessed++
+			default:
 				out.Skipped++
+				if opts.Regenerate && settled[f.VEXStatus] {
+					out.Settled++
+				}
 				continue
 			}
-			out.Reassessed++
 		}
 		if len(opts.Only) > 0 && !contains(opts.Only, f.VulnID) {
 			out.Skipped++
@@ -494,6 +508,13 @@ func statementKey(vulnID, purl string) string { return vulnID + "\x00" + purl }
 var reassessable = map[string]bool{
 	string(vex.StatusUnderInvestigation): true,
 	string(vex.StatusAffected):           true,
+}
+
+// settled lists final verdicts that Regenerate leaves alone; only Force
+// re-assesses them.
+var settled = map[string]bool{
+	string(vex.StatusNotAffected): true,
+	string(vex.StatusFixed):       true,
 }
 
 // staleStatements returns the (vuln_id, purl) keys of findings whose newest
