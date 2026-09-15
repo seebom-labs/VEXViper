@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -200,21 +201,31 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		client := p.BOMHort.(*bomhort.Client)
 		docID := documentID(res.Document)
 		log.Info("waiting for BOMHort to ingest the document", "document", docID, "timeout", *wait)
-		return p.Wait(ctx, docID, *wait, func(ctx context.Context) ([]bomhort.VEXStatement, error) {
-			var all []bomhort.VEXStatement
-			for page := 1; ; page++ {
-				pg, err := client.VEXStatements(ctx, page, 100)
-				if err != nil {
-					return nil, err
-				}
-				all = append(all, pg.Data...)
-				if len(pg.Data) < 100 {
-					return all, nil
-				}
-			}
-		})
+		if err := p.Wait(ctx, docID, *wait, client.AllVEXStatements); err != nil {
+			return err
+		}
+		v, err := p.WaitApplied(ctx, res, *wait)
+		printVerification(stderr, v)
+		return err
 	}
 	return nil
+}
+
+func printVerification(w io.Writer, v pipeline.Verification) {
+	fmt.Fprintf(w, "  BOMHort applied:   %d statements", v.Applied)
+	if len(v.Overridden) > 0 {
+		fmt.Fprintf(w, ", %d overridden by newer statements", len(v.Overridden))
+	}
+	if len(v.Pending) > 0 {
+		fmt.Fprintf(w, ", %d NOT matched", len(v.Pending))
+	}
+	fmt.Fprintln(w)
+	for _, s := range v.Overridden {
+		fmt.Fprintf(w, "    overridden: %s %s (ours %s, BOMHort %s)\n", s.VulnID, s.PURL, s.Expected, s.Actual)
+	}
+	for _, s := range v.Pending {
+		fmt.Fprintf(w, "    unmatched:  %s %s\n", s.VulnID, s.PURL)
+	}
 }
 
 func printSummary(w io.Writer, res *pipeline.Outcome) {
@@ -224,6 +235,9 @@ func printSummary(w io.Writer, res *pipeline.Outcome) {
 		fmt.Fprintf(w, "  settled verdicts kept: %d (not_affected/fixed; use --force to re-assess)\n", res.Settled)
 	}
 	fmt.Fprintf(w, "  provider usage:    %s\n", res.Usage.String())
+	if res.Deferred > 0 {
+		fmt.Fprintf(w, "  deferred:          %d findings left without statement (llm.budget exhausted; re-run later)\n", res.Deferred)
+	}
 	if res.RepoHow != "" {
 		fmt.Fprintf(w, "  product repo:      %s", res.RepoHow)
 		if res.RepoDir != "" {
@@ -256,6 +270,8 @@ func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
 	upload := fs.Bool("upload", false, "upload generated documents to BOMHort")
 	once := fs.Bool("once", false, "run a single pass and exit (for CronJobs)")
 	skipZero := fs.Bool("skip-zero", true, "ignore SBOMs without vulnerabilities")
+	concurrency := fs.Int("concurrency", 0, "SBOMs processed in parallel (default from config watch.concurrency)")
+	listen := fs.String("listen", "", "serve /metrics and /healthz on this address (default from config watch.listen)")
 	reassess := fs.Duration("reassess-after", -1, "re-run SBOMs and re-assess under_investigation/affected findings older than this (default from config watch.reassess_after; 0 disables)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -276,6 +292,10 @@ func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
 		Once:          *once,
 		SkipZero:      *skipZero,
 		ReassessAfter: cfg.Watch.ReassessAfter,
+		Concurrency:   cfg.Watch.Concurrency,
+	}
+	if *concurrency > 0 {
+		opts.Concurrency = *concurrency
 	}
 	if *reassess >= 0 {
 		opts.ReassessAfter = *reassess
@@ -289,7 +309,25 @@ func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
 	if *out != "" {
 		opts.OutDir = *out
 	}
-	log.Info("starting watch", "bomhort", cfg.BOMHort.URL, "interval", opts.Interval, "upload", opts.Upload, "once", opts.Once)
+	if *listen == "" {
+		*listen = cfg.Watch.Listen
+	}
+	if *listen != "" {
+		p.Metrics = pipeline.NewMetrics()
+		srv := &http.Server{Addr: *listen, Handler: p.Metrics.Handler(3 * opts.Interval), ReadHeaderTimeout: 5 * time.Second}
+		ln, err := net.Listen("tcp", *listen)
+		if err != nil {
+			return fmt.Errorf("listen %s: %w", *listen, err)
+		}
+		go func() { _ = srv.Serve(ln) }()
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = srv.Shutdown(shutdownCtx)
+		}()
+		log.Info("serving metrics", "addr", ln.Addr().String(), "endpoints", "/metrics /healthz")
+	}
+	log.Info("starting watch", "bomhort", cfg.BOMHort.URL, "interval", opts.Interval, "upload", opts.Upload, "once", opts.Once, "concurrency", opts.Concurrency)
 	err = p.Watch(ctx, p.BOMHort.(*bomhort.Client), opts)
 	if errors.Is(err, context.Canceled) {
 		return nil

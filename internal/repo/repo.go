@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -203,6 +204,9 @@ type Cloner struct {
 	Timeout time.Duration
 	// Depth for shallow clones (default 1).
 	Depth int
+
+	// locks serializes concurrent clones of the same checkout directory.
+	locks sync.Map // dir → *sync.Mutex
 }
 
 // Path returns the cache path a location would be cloned to.
@@ -220,6 +224,9 @@ func (c *Cloner) Clone(ctx context.Context, loc Location) (string, error) {
 		return "", fmt.Errorf("repo: empty location")
 	}
 	dir := c.Path(loc)
+	mu, _ := c.locks.LoadOrStore(dir, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		return dir, nil
 	}

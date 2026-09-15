@@ -35,7 +35,19 @@ spec:
             - name: mcp
               containerPort: {{ .Values.mcp.port }}
           {{- else }}
-          args: ["watch", "--config", "/etc/vexviper/vexviper.yaml", "--log-json"]
+          args: ["watch", "--config", "/etc/vexviper/vexviper.yaml", "--log-json"{{- if .Values.metrics.enabled }}, "--listen", "0.0.0.0:{{ .Values.metrics.port }}"{{- end }}]
+          {{- if .Values.metrics.enabled }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            initialDelaySeconds: 10
+            periodSeconds: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 30
+          {{- end }}
           {{- end }}
           env: {{- include "vexviper.env" . | nindent 12 }}
           securityContext: {{- toYaml .Values.securityContext | nindent 12 }}

@@ -57,6 +57,12 @@ type Pipeline struct {
 	Provider llm.Provider
 	Cloner   Cloner
 	Evidence *evidence.Collector
+	// Budget caps provider spend for the process (nil = unlimited). Watch
+	// resets it every pass; once exhausted, remaining findings are left
+	// without a statement (Outcome.Deferred) so a later run picks them up.
+	Budget *llm.Budget
+	// Metrics receives per-run and per-pass counters (nil = off).
+	Metrics *Metrics
 	// Cache reuses verdicts across SBOMs (nil = disabled).
 	Cache *assesscache.Store
 	Log   *slog.Logger
@@ -74,6 +80,9 @@ func New(cfg config.Config, log *slog.Logger) (*Pipeline, error) {
 	if cfg.BOMHort.ServiceToken != "" {
 		opts = append(opts, bomhort.WithServiceToken(cfg.BOMHort.ServiceToken))
 	}
+	if cfg.BOMHort.RateLimit > 0 {
+		opts = append(opts, bomhort.WithRateLimit(cfg.BOMHort.RateLimit, cfg.BOMHort.RateWindow))
+	}
 	p := &Pipeline{
 		Cfg:     cfg,
 		BOMHort: bomhort.New(cfg.BOMHort.URL, opts...),
@@ -84,6 +93,10 @@ func New(cfg config.Config, log *slog.Logger) (*Pipeline, error) {
 		return nil, err
 	}
 	p.Provider = provider
+	p.Budget = llm.NewBudget(cfg.LLM.Budget)
+	if p.Budget != nil {
+		log.Info("provider budget active", "limits", cfg.LLM.Budget.String())
+	}
 	if cfg.Repo.Clone {
 		p.Cloner = &repo.Cloner{CacheDir: cfg.Repo.CacheDir}
 	}
@@ -227,6 +240,9 @@ type Outcome struct {
 	Settled int
 	// Reassessed counts findings included because their statement expired.
 	Reassessed int
+	// Deferred counts findings left unassessed (no statement emitted)
+	// because the provider budget was exhausted; a later run picks them up.
+	Deferred int
 	// Usage aggregates provider cost over the run (cache hits included).
 	Usage       llm.Usage
 	Document    []byte
@@ -252,7 +268,12 @@ type AssessmentRecord struct {
 }
 
 // Run executes the pipeline for one SBOM.
-func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
+func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (out *Outcome, err error) {
+	defer func() { p.Metrics.RecordRun(out, err) }()
+	return p.run(ctx, opts)
+}
+
+func (p *Pipeline) run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 	if p.Cfg.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, p.Cfg.Timeout)
@@ -334,14 +355,23 @@ func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 		if readCache {
 			a, cached = p.Cache.Get(key)
 		}
-		if cached {
+		switch {
+		case cached:
 			a.Usage = llm.Usage{CacheHits: 1}
-		} else {
+		case p.Budget.Exceeded():
+			// No statement: the finding stays open in BOMHort and the next
+			// run (fresh budget) assesses it.
+			reason, _ := p.Budget.Check()
+			out.Deferred++
+			log.Warn("provider budget exhausted; finding deferred", "vuln", f.VulnID, "purl", f.PURL, "reason", reason)
+			continue
+		default:
 			var err error
 			a, err = p.Provider.Assess(ctx, req)
+			p.Budget.Spend(a.Usage)
 			if err != nil {
 				log.Error("assessment failed; marking under_investigation", "vuln", f.VulnID, "purl", f.PURL, "err", err)
-				a = llm.Assessment{Status: vex.StatusUnderInvestigation, Reasoning: "assessment error: " + err.Error(), Provider: p.Provider.Name()}
+				a = llm.Assessment{Status: vex.StatusUnderInvestigation, Reasoning: "assessment error: " + err.Error(), Provider: p.Provider.Name(), Usage: a.Usage}
 			} else if err := p.Cache.Put(key, a, productName(res.Product)); err != nil {
 				log.Warn("assessment cache write failed", "err", err)
 			}
@@ -367,6 +397,9 @@ func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 	}
 	if !out.Usage.IsZero() {
 		log.Info("provider usage", "sbom", res.Product.SBOMID, "usage", out.Usage.String())
+	}
+	if out.Deferred > 0 {
+		log.Warn("findings deferred without statement: provider budget exhausted", "sbom", res.Product.SBOMID, "deferred", out.Deferred, "limits", p.Budget.Limits.String())
 	}
 	for _, g := range built.Guardrails {
 		log.Warn("guardrail applied", "vuln", g.VulnID, "purl", g.PURL, "reason", g.Reason)
@@ -609,6 +642,88 @@ func parseTime(s string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// Verification is the result of comparing an uploaded document with what
+// BOMHort reports on /api/v1/sboms/{id}/vulnerabilities afterwards. Until
+// BOMHort exposes an ingestion result itself (seebom-labs/BOMHort#336) this
+// is the only way to learn whether statements matched.
+type Verification struct {
+	// Applied statements whose (vuln_id, purl) now carries our status.
+	Applied int
+	// Overridden statements where BOMHort shows a different status, i.e. a
+	// newer statement (typically human) wins.
+	Overridden []VerifiedStatement
+	// Pending statements whose finding still has no vex_status; after the
+	// wait timeout this means the statement did not match (PURL/vuln id).
+	Pending []VerifiedStatement
+}
+
+// VerifiedStatement identifies one statement and the status BOMHort shows.
+type VerifiedStatement struct {
+	VulnID   string     `json:"vuln_id"`
+	PURL     string     `json:"purl"`
+	Expected vex.Status `json:"expected"`
+	Actual   string     `json:"actual,omitempty"`
+}
+
+// Complete reports whether every statement is either applied or overridden.
+func (v Verification) Complete() bool { return len(v.Pending) == 0 }
+
+// Verify fetches the SBOM's findings once and classifies out's statements.
+func (p *Pipeline) Verify(ctx context.Context, out *Outcome) (Verification, error) {
+	vulns, err := p.BOMHort.Vulnerabilities(ctx, out.Product.SBOMID)
+	if err != nil {
+		return Verification{}, err
+	}
+	status := map[string]string{}
+	for _, v := range vulns {
+		k := statementKey(v.VulnID, v.PURL)
+		// Duplicate rows: any row with a status beats an empty one.
+		if v.VEXStatus != "" || status[k] == "" {
+			status[k] = v.VEXStatus
+		}
+	}
+	var res Verification
+	for _, a := range out.Assessments {
+		vs := VerifiedStatement{VulnID: a.VulnID, PURL: a.PURL, Expected: a.Status}
+		actual, seen := status[statementKey(a.VulnID, a.PURL)]
+		vs.Actual = actual
+		switch {
+		case !seen || actual == "":
+			res.Pending = append(res.Pending, vs)
+		case actual == string(a.Status):
+			res.Applied++
+		default:
+			res.Overridden = append(res.Overridden, vs)
+		}
+	}
+	return res, nil
+}
+
+// WaitApplied polls Verify until every statement is visible on the
+// findings or the timeout expires; the last verification is returned in
+// both cases so callers can report which statements did not match.
+func (p *Pipeline) WaitApplied(ctx context.Context, out *Outcome, timeout time.Duration) (Verification, error) {
+	deadline := time.Now().Add(timeout)
+	var last Verification
+	for {
+		v, err := p.Verify(ctx, out)
+		if err == nil {
+			last = v
+			if v.Complete() {
+				return v, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return last, fmt.Errorf("timeout: %d of %d statements not applied by BOMHort (check vuln id / PURL match)", len(last.Pending), len(out.Assessments))
+		}
+		select {
+		case <-ctx.Done():
+			return last, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // Wait polls BOMHort until statements from the uploaded document are

@@ -1,0 +1,14 @@
+{{- if and (eq .Values.mode "deployment") .Values.metrics.enabled .Values.metrics.podMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "vexviper.fullname" . }}
+  labels: {{- include "vexviper.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "vexviper.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.podMonitor.interval }}
+{{- end }}

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +89,9 @@ func TestGenerateCommand(t *testing.T) {
 	}
 	if len(statements) != 1 || statements[0].DocumentID != doc.ID || statements[0].VulnID != "GO-2025-0001" {
 		t.Fatalf("statements = %+v", statements)
+	}
+	if !strings.Contains(stderr.String(), "BOMHort applied:   1 statements\n") {
+		t.Fatalf("missing verification line:\n%s", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "VEXViper summary") || !strings.Contains(stderr.String(), "uploaded:") {
 		t.Fatalf("summary missing:\n%s", stderr.String())
@@ -230,5 +235,63 @@ func TestDocumentIDAndTruncate(t *testing.T) {
 	}
 	if truncate("abcdef", 4) != "abc…" || truncate("ab", 4) != "ab" {
 		t.Fatal("truncate")
+	}
+}
+
+func TestWatchListenServesMetrics(t *testing.T) {
+	srv := fakeBOMHort(t)
+	out := t.TempDir()
+	cfg := writeConfig(t, srv, out)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	var stderr bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- cmdWatch(ctx, []string{"--config", cfg, "--interval", "1h", "--listen", addr, "--log-level", "error"}, &stderr)
+	}()
+
+	var body string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + addr + "/metrics")
+		if err == nil {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			body = string(b)
+			if strings.Contains(body, "vexviper_watch_passes_total 1") {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(body, "vexviper_watch_passes_total 1\n") || !strings.Contains(body, "vexviper_runs_total 1\n") {
+		t.Fatalf("metrics:\n%s\n%s", body, stderr.String())
+	}
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("healthz: %v %v", err, resp)
+	}
+	resp.Body.Close()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("watch: %v\n%s", err, stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch did not stop")
+	}
+	// Port released after shutdown.
+	if ln, err := net.Listen("tcp", addr); err != nil {
+		t.Fatalf("port still bound: %v", err)
+	} else {
+		ln.Close()
 	}
 }

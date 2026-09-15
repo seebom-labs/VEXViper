@@ -106,6 +106,7 @@ type Client struct {
 	// maxRetries bounds retries on 429 responses.
 	maxRetries int
 	sleep      func(time.Duration)
+	limiter    *RateLimiter
 }
 
 // Option configures a Client.
@@ -119,6 +120,11 @@ func WithServiceToken(t string) Option { return func(c *Client) { c.serviceToken
 
 // WithHTTPClient replaces the underlying HTTP client.
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
+
+// WithRateLimit paces requests to at most limit per window (0 = off).
+func WithRateLimit(limit int, window time.Duration) Option {
+	return func(c *Client) { c.limiter = NewRateLimiter(limit, window) }
+}
 
 // WithMaxRetries bounds 429 retries (default 3).
 func WithMaxRetries(n int) Option { return func(c *Client) { c.maxRetries = n } }
@@ -262,6 +268,9 @@ type request struct {
 func (c *Client) do(ctx context.Context, method, path string, req *request, out any) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 		var body io.Reader
 		if req != nil && req.body != nil {
 			body = bytes.NewReader(req.body)

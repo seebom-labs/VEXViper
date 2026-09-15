@@ -142,6 +142,25 @@ model=claude-haiku-4.5`), returned by the `generate_vex` MCP tool and accumulate
 watch state file (`usage` = lifetime total, `last_pass_usage` = most recent pass), so the cost
 of automated triage is visible without any external metering.
 
+**Budget.** `llm.budget.{max_calls,max_tokens,max_premium_requests}` caps what a run (CLI) or a
+single watch pass may spend. Once a limit is hit the remaining findings are *deferred*: they get
+no statement (so they stay visible as open in BOMHort), the SBOM is not marked processed, and
+the next pass — with a fresh budget — picks them up. Deferred counts show up in the summary,
+the MCP result and `vexviper_findings_deferred_total`. Cache hits are free and never count.
+
+**Metrics.** `vexviper watch --listen :9090` (or `watch.listen`) serves `GET /metrics`
+(Prometheus text format: runs, findings, statements by status, provider calls/tokens/premium
+requests, cache hits, watch passes, last-pass timestamp) and `GET /healthz` (503 once no pass
+finished within 3× the interval). The Helm chart wires both when `metrics.enabled` is set.
+
+### Throughput: concurrency and rate limiting
+
+A watch pass processes SBOMs serially by default. `watch.concurrency: 4` (or `--concurrency`)
+runs several pipelines in parallel — budget, cache and repo checkouts are shared and safe;
+clones of the same repository are serialized. BOMHort's gateway allows ~100 requests / 10 s per
+client IP, so the client paces itself with `bomhort.rate_limit: 90` per `bomhort.rate_window: 10s`
+(default; `0` disables) and still backs off on `429`.
+
 Docker: `docker build -t vexviper . && docker run --rm -v $PWD/work:/work -e VEXVIPER_BOMHORT_URL=http://host:8080 vexviper generate --sbom …`
 (the image ships git + Go toolchain + govulncheck).
 
@@ -156,6 +175,8 @@ every key overridable by `VEXVIPER_<SECTION>_<KEY>` and secrets via `*_env` indi
 | `bomhort.api_key_env` | `BOMHORT_API_KEY` | | X-API-Key for uploads |
 | `llm.provider` | `VEXVIPER_LLM_PROVIDER` | `heuristic` | `heuristic` \| `openai` \| `github` \| `copilot` \| `mcptool` |
 | `llm.min_confidence` | `VEXVIPER_LLM_MIN_CONFIDENCE` | `0.6` | below → `under_investigation` |
+| `llm.budget.{max_calls,max_tokens,max_premium_requests}` | `VEXVIPER_LLM_BUDGET_*` | unlimited | spend cap per run / watch pass; beyond it findings are deferred |
+| `bomhort.{rate_limit,rate_window}` | `VEXVIPER_BOMHORT_RATE_*` | `90`, `10s` | client-side pacing below BOMHort's gateway limit |
 | `llm.openai.{base_url,model,api_key_env}` | `VEXVIPER_OPENAI_*` | OpenAI / `gpt-4o-mini` | any OpenAI-compatible endpoint (Azure, GitHub Models, Ollama, vLLM, LiteLLM) |
 | `llm.github.{base_url,model,token_env}` | `VEXVIPER_GITHUB_*` / `GITHUB_TOKEN` | GitHub Models / `openai/gpt-4.1-mini` | GitHub Models inference |
 | `llm.copilot.{command,model,args,in_repo,timeout}` | `VEXVIPER_COPILOT_*` | `copilot`, 180s | Copilot CLI non-interactive mode |
@@ -164,6 +185,7 @@ every key overridable by `VEXVIPER_<SECTION>_<KEY>` and secrets via `*_env` indi
 | `repo.sboms[]{match,repo}` | — | | per-SBOM repository pins (glob match, `{version}` placeholder) |
 | `vex.{author,author_role,supplier,namespace,out_dir,upload,regenerate}` | `VEXVIPER_VEX_*` | `VEXViper`, `automated triage (LLM-assisted)` | document metadata & output |
 | `watch.{interval,state_file,reassess_after}` | `VEXVIPER_WATCH_*` | `15m`, TTL off | poller & periodic re-assessment |
+| `watch.{concurrency,listen}` | `VEXVIPER_WATCH_CONCURRENCY`, `VEXVIPER_WATCH_LISTEN` | `1`, off | parallel SBOMs per pass; `/metrics` + `/healthz` address |
 | `cache.{enabled,dir,ttl}` | `VEXVIPER_CACHE_*` | on, `<repo.cache_dir>/assessments`, never | assessment cache shared across SBOMs |
 | `timeout` | `VEXVIPER_TIMEOUT` | `30m` | per SBOM |
 

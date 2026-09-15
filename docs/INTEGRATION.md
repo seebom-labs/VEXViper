@@ -153,10 +153,18 @@ SBOM producers can help: include the VCS URL **and exact commit** (SPDX `Externa
 `SECURITY`/`OTHER` + `packageSourceInfo`, CycloneDX `externalReferences[type=vcs]` +
 `pedigree.commits`), build metadata (Go version, build tags) and a stable product identifier.
 
+Until those land, VEXViper compensates client-side: `watch.concurrency` runs several SBOMs per
+pass in parallel while `bomhort.rate_limit` (default 90 / 10 s) keeps the client under the
+gateway limit, and `--wait` verifies after upload — by re-reading
+`/api/v1/sboms/{id}/vulnerabilities` — which statements BOMHort actually applied, which were
+overridden by a newer (human) statement and which never matched (the poor man's #336).
+
 ### Cost visibility
 
 Every run reports provider usage (calls, tokens, Copilot premium requests, model, cache hits)
 per finding, per SBOM and cumulatively in the watch state file; see README "Cost tracking".
+`llm.budget` caps spend per run / pass (deferred findings simply stay open in BOMHort and are
+retried next pass), and `watch.listen` exposes everything as Prometheus metrics plus `/healthz`.
 
 ## 7. Using a GitHub Copilot subscription as LLM source
 

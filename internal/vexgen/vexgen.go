@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
@@ -55,7 +56,13 @@ type Result struct {
 // Build assembles the document. Entries with invalid assessments (after
 // guardrails) are downgraded rather than dropped so every finding gets a
 // statement.
+// buildMu serializes Build: go-vex keeps the namespace in the package-level
+// vex.DefaultNamespace, which GenerateCanonicalID reads.
+var buildMu sync.Mutex
+
 func Build(productID string, entries []Entry, opts Options) (*Result, error) {
+	buildMu.Lock()
+	defer buildMu.Unlock()
 	now := time.Now().UTC()
 	if opts.Now != nil {
 		now = opts.Now().UTC()

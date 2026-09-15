@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/mfahlandt/vexviper/internal/bomhort"
@@ -96,6 +97,8 @@ type WatchOptions struct {
 	// this much time passed since its last run, and lets Run revisit
 	// under_investigation/affected findings whose statements are that old.
 	ReassessAfter time.Duration
+	// Concurrency is the number of SBOMs processed in parallel (<=1 = serial).
+	Concurrency int
 }
 
 // Watch polls BOMHort and runs the pipeline for every SBOM that is new or
@@ -114,7 +117,9 @@ func (p *Pipeline) Watch(ctx context.Context, lister SBOMLister, opts WatchOptio
 		return err
 	}
 	for {
+		start := time.Now()
 		n, err := p.watchPass(ctx, lister, state, opts)
+		p.Metrics.RecordPass(time.Since(start), err)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -147,9 +152,11 @@ func (p *Pipeline) watchPass(ctx context.Context, lister SBOMLister, state *Watc
 	if err != nil {
 		return 0, fmt.Errorf("list sboms: %w", err)
 	}
-	var processed int
-	var errs []error
 	state.LastPassUsage = llm.Usage{}
+	p.Budget.Reset()
+
+	// Select work serially (cheap), then run the pipeline in parallel.
+	var todo []bomhort.SBOM
 	for _, s := range sboms {
 		fp := fingerprint(s)
 		due := opts.ReassessAfter > 0 && time.Since(state.ProcessedAt[s.ID]) >= opts.ReassessAfter
@@ -162,20 +169,63 @@ func (p *Pipeline) watchPass(ctx context.Context, lister SBOMLister, state *Watc
 			continue
 		}
 		log.Info("processing sbom", "sbom", s.ID, "name", s.DocumentName, "vulns", s.VulnCount, "changed", state.Processed[s.ID] != fp, "reassess", due)
-		out, err := p.Run(ctx, RunOptions{SBOMRef: s.ID, OutDir: opts.OutDir, Upload: opts.Upload, ReassessAfter: opts.ReassessAfter})
-		if err != nil {
-			errs = append(errs, fmt.Errorf("sbom %s: %w", s.ID, err))
-			if ctx.Err() != nil {
-				break
+		todo = append(todo, s)
+	}
+
+	workers := opts.Concurrency
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > len(todo) {
+		workers = len(todo)
+	}
+	var (
+		mu        sync.Mutex
+		processed int
+		errs      []error
+		wg        sync.WaitGroup
+		queue     = make(chan bomhort.SBOM)
+	)
+	worker := func() {
+		defer wg.Done()
+		for s := range queue {
+			out, err := p.Run(ctx, RunOptions{SBOMRef: s.ID, OutDir: opts.OutDir, Upload: opts.Upload, ReassessAfter: opts.ReassessAfter})
+			mu.Lock()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("sbom %s: %w", s.ID, err))
+				mu.Unlock()
+				continue
 			}
-			continue
+			processed++
+			state.Usage.Add(out.Usage)
+			state.LastPassUsage.Add(out.Usage)
+			if out.Deferred > 0 {
+				// Not marked processed: the next pass (fresh budget) retries it.
+				log.Warn("sbom partially processed; budget exhausted", "sbom", s.ID, "deferred", out.Deferred, "usage", out.Usage.String())
+			} else {
+				state.Processed[s.ID] = fingerprint(s)
+				state.ProcessedAt[s.ID] = time.Now().UTC()
+				log.Info("sbom processed", "sbom", s.ID, "findings", out.Findings, "reassessed", out.Reassessed, "skipped", out.Skipped, "counts", out.Counts, "usage", out.Usage.String())
+			}
+			mu.Unlock()
 		}
-		processed++
-		state.Processed[s.ID] = fp
-		state.ProcessedAt[s.ID] = time.Now().UTC()
-		state.Usage.Add(out.Usage)
-		state.LastPassUsage.Add(out.Usage)
-		log.Info("sbom processed", "sbom", s.ID, "findings", out.Findings, "reassessed", out.Reassessed, "skipped", out.Skipped, "counts", out.Counts, "usage", out.Usage.String())
+	}
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go worker()
+	}
+feed:
+	for _, s := range todo {
+		select {
+		case <-ctx.Done():
+			break feed
+		case queue <- s:
+		}
+	}
+	close(queue)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		errs = append(errs, err)
 	}
 	return processed, errors.Join(errs...)
 }

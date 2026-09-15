@@ -320,6 +320,7 @@ type generateOut struct {
 	Findings    int                         `json:"findings"`
 	Skipped     int                         `json:"skipped"`
 	Settled     int                         `json:"settled,omitempty"`
+	Deferred    int                         `json:"deferred,omitempty"`
 	Usage       llm.Usage                   `json:"usage"`
 	RepoURL     string                      `json:"repo_url,omitempty"`
 	Assessments []pipeline.AssessmentRecord `json:"assessments"`
@@ -330,7 +331,7 @@ func (s *Server) generateVEX(ctx context.Context, _ *mcp.CallToolRequest, in gen
 	if err != nil {
 		return nil, generateOut{}, err
 	}
-	out := generateOut{Findings: o.Findings, Skipped: o.Skipped, Settled: o.Settled, Usage: o.Usage, RepoURL: o.RepoHow, Assessments: o.Assessments}
+	out := generateOut{Findings: o.Findings, Skipped: o.Skipped, Settled: o.Settled, Deferred: o.Deferred, Usage: o.Usage, RepoURL: o.RepoHow, Assessments: o.Assessments}
 	out.Filename, out.Path, out.Document, out.Guardrails = o.Filename, o.Path, toMap(o.Document), o.Guardrails
 	out.Counts = map[string]int{}
 	for k, v := range o.Counts {

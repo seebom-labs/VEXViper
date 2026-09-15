@@ -682,3 +682,102 @@ func TestRunUsesAssessmentCache(t *testing.T) {
 		t.Fatalf("nil cache: %v calls=%d", err, len(mock.Calls))
 	}
 }
+
+func TestRunDefersFindingsWhenBudgetExhausted(t *testing.T) {
+	bh := bomhortFixture(t)
+	mock := &llm.Mock{Default: &llm.Assessment{Status: vex.StatusAffected, ActionStatement: "upgrade", Confidence: 0.8, Reasoning: "r",
+		Usage: llm.Usage{Calls: 1, PremiumRequests: 0.33}}}
+	p := newTestPipeline(t, bh, mock, nil)
+	p.Cache = assesscache.New(filepath.Join(t.TempDir(), "assessments"), 0)
+	p.Budget = llm.NewBudget(llm.BudgetLimits{MaxCalls: 1})
+
+	out, err := p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Upload: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.Calls) != 1 || out.Deferred != 1 || out.Usage.Calls != 1 {
+		t.Fatalf("calls=%d deferred=%d usage=%+v", len(mock.Calls), out.Deferred, out.Usage)
+	}
+	if len(out.Assessments) != 1 {
+		t.Fatalf("deferred finding must not get a statement: %+v", out.Assessments)
+	}
+	if !p.Budget.Exceeded() || p.Budget.Spent().PremiumRequests != 0.33 {
+		t.Fatalf("budget = %+v", p.Budget.Spent())
+	}
+	if st, _ := p.Cache.Stats(); st.Entries != 1 {
+		t.Fatalf("only the assessed finding may be cached, got %d", st.Entries)
+	}
+
+	// Fresh budget: the cached verdict is free, the deferred one is assessed.
+	p.Budget.Reset()
+	mock.Calls = nil
+	out, err = p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Deferred != 0 || len(out.Assessments) != 2 || out.Usage.CacheHits != 1 || len(mock.Calls) != 1 {
+		t.Fatalf("second run deferred=%d assessments=%d usage=%+v", out.Deferred, len(out.Assessments), out.Usage)
+	}
+
+	// Heuristic provider never spends, so a budget never defers it.
+	h := newTestPipeline(t, bh, llm.Heuristic{}, nil)
+	h.Budget = llm.NewBudget(llm.BudgetLimits{MaxCalls: 1})
+	out, err = h.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Deferred != 0 {
+		t.Fatalf("heuristic deferred=%d", out.Deferred)
+	}
+}
+
+func TestVerifyAndWaitApplied(t *testing.T) {
+	bh := bomhortFixture(t)
+	p := newTestPipeline(t, bh, llm.Heuristic{}, nil)
+	out := &Outcome{Product: source.Product{SBOMID: "sbom-1"}, Assessments: []AssessmentRecord{
+		{VulnID: "GO-2025-0002", PURL: "pkg:golang/github.com/foo/bar@v1.2.3", Status: vex.StatusAffected},
+		{VulnID: "GO-2025-0003", PURL: "pkg:golang/github.com/baz/qux@v2.0.0", Status: vex.StatusUnderInvestigation},
+		{VulnID: "GO-2025-9999", PURL: "pkg:golang/example.com/missing@v1.0.0", Status: vex.StatusNotAffected},
+	}}
+
+	// Nothing of ours ingested yet: GO-2025-0003 already carries a human
+	// not_affected in the fixture (overridden), the rest is pending.
+	v, err := p.Verify(context.Background(), out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Applied != 0 || len(v.Pending) != 2 || len(v.Overridden) != 1 || v.Complete() {
+		t.Fatalf("before ingest: %+v", v)
+	}
+
+	// BOMHort applied one; the third never matched.
+	for i := range bh.vulns {
+		if bh.vulns[i].VulnID == "GO-2025-0002" {
+			bh.vulns[i].VEXStatus = "affected"
+		}
+	}
+	// Duplicate row without status must not hide the applied one.
+	bh.vulns = append(bh.vulns, bomhort.Vulnerability{VulnID: "GO-2025-0002", PURL: "pkg:golang/github.com/foo/bar@v1.2.3"})
+	v, err = p.WaitApplied(context.Background(), out, 0)
+	if err == nil || !strings.Contains(err.Error(), "1 of 3 statements not applied") {
+		t.Fatalf("WaitApplied err = %v", err)
+	}
+	if v.Applied != 1 || len(v.Overridden) != 1 || v.Overridden[0].Actual != "not_affected" || len(v.Pending) != 1 || v.Pending[0].VulnID != "GO-2025-9999" {
+		t.Fatalf("after ingest: %+v", v)
+	}
+
+	// All matched → complete without error.
+	out.Assessments = out.Assessments[:2]
+	v, err = p.WaitApplied(context.Background(), out, time.Second)
+	if err != nil || !v.Complete() || v.Applied != 1 {
+		t.Fatalf("complete: %+v err=%v", v, err)
+	}
+
+	// Cancelled context aborts the poll loop.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out.Assessments = append(out.Assessments, AssessmentRecord{VulnID: "X", PURL: "pkg:golang/x@v1", Status: vex.StatusAffected})
+	if _, err := p.WaitApplied(ctx, out, time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mfahlandt/vexviper/internal/llm"
 )
 
 // EnvPrefix is the prefix for all environment variable overrides.
@@ -82,6 +84,10 @@ type BOMHort struct {
 	ServiceToken string `yaml:"service_token"`
 	// APIKeyEnv names an environment variable holding the key (preferred over api_key in files).
 	APIKeyEnv string `yaml:"api_key_env"`
+	// RateLimit paces API calls to at most this many per RateWindow
+	// (0 = off). BOMHort's gateway default is 100 / 10 s per client IP.
+	RateLimit  int           `yaml:"rate_limit"`
+	RateWindow time.Duration `yaml:"rate_window"`
 }
 
 // LLM selects and configures the assessment provider.
@@ -90,11 +96,14 @@ type LLM struct {
 	// MinConfidence below which an assessment is downgraded to under_investigation.
 	MinConfidence float64 `yaml:"min_confidence"`
 	// AllowUnsupportedNotAffected lets an LLM emit not_affected without deterministic evidence.
-	AllowUnsupportedNotAffected bool    `yaml:"allow_unsupported_not_affected"`
-	OpenAI                      OpenAI  `yaml:"openai"`
-	GitHub                      GitHub  `yaml:"github"`
-	Copilot                     Copilot `yaml:"copilot"`
-	MCP                         MCP     `yaml:"mcp"`
+	AllowUnsupportedNotAffected bool `yaml:"allow_unsupported_not_affected"`
+	// Budget caps provider spend per process (CLI: per run; watch: per
+	// pass). Findings beyond the budget get offline heuristic verdicts.
+	Budget  llm.BudgetLimits `yaml:"budget"`
+	OpenAI  OpenAI           `yaml:"openai"`
+	GitHub  GitHub           `yaml:"github"`
+	Copilot Copilot          `yaml:"copilot"`
+	MCP     MCP              `yaml:"mcp"`
 }
 
 // Copilot configures the GitHub Copilot CLI provider. Authentication is the
@@ -214,12 +223,18 @@ type Watch struct {
 	// ReassessAfter periodically revisits under_investigation/affected
 	// findings whose VEX statement is older than this (0 = disabled).
 	ReassessAfter time.Duration `yaml:"reassess_after"`
+	// Concurrency is how many SBOMs a watch pass processes in parallel
+	// (default 1). Provider budget, cache and repo checkouts are shared.
+	Concurrency int `yaml:"concurrency"`
+	// Listen serves GET /metrics (Prometheus text format) and GET /healthz
+	// while watching, e.g. ":9090" ("" = off).
+	Listen string `yaml:"listen"`
 }
 
 // Default returns the built-in defaults.
 func Default() Config {
 	return Config{
-		BOMHort: BOMHort{URL: "http://localhost:8080", APIKeyEnv: "BOMHORT_API_KEY"},
+		BOMHort: BOMHort{URL: "http://localhost:8080", APIKeyEnv: "BOMHORT_API_KEY", RateLimit: 90, RateWindow: 10 * time.Second},
 		LLM: LLM{
 			Provider:      ProviderHeuristic,
 			MinConfidence: 0.6,
@@ -241,7 +256,7 @@ func Default() Config {
 		Repo:    Repo{CacheDir: ".vexviper-cache", Clone: true, Govulncheck: true},
 		Cache:   Cache{Enabled: true},
 		VEX:     VEX{Author: "VEXViper", AuthorRole: "automated triage (LLM-assisted)", Namespace: "https://vexviper.dev/docs", OutDir: "."},
-		Watch:   Watch{Interval: 15 * time.Minute, StateFile: ".vexviper-cache/watch-state.json"},
+		Watch:   Watch{Interval: 15 * time.Minute, StateFile: ".vexviper-cache/watch-state.json", Concurrency: 1},
 		Timeout: 30 * time.Minute,
 	}
 }
@@ -291,13 +306,25 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) {
 			}
 		}
 	}
+	integer := func(key string, dst *int) {
+		if v, ok := lookup(EnvPrefix + key); ok {
+			if n, err := strconv.Atoi(v); err == nil {
+				*dst = n
+			}
+		}
+	}
 
 	str("BOMHORT_URL", &c.BOMHort.URL)
 	str("BOMHORT_API_KEY", &c.BOMHort.APIKey)
 	str("BOMHORT_SERVICE_TOKEN", &c.BOMHort.ServiceToken)
+	integer("BOMHORT_RATE_LIMIT", &c.BOMHort.RateLimit)
+	dur("BOMHORT_RATE_WINDOW", &c.BOMHort.RateWindow)
 	str("LLM_PROVIDER", &c.LLM.Provider)
 	flt("LLM_MIN_CONFIDENCE", &c.LLM.MinConfidence)
 	boolean("LLM_ALLOW_UNSUPPORTED_NOT_AFFECTED", &c.LLM.AllowUnsupportedNotAffected)
+	integer("LLM_BUDGET_MAX_CALLS", &c.LLM.Budget.MaxCalls)
+	integer("LLM_BUDGET_MAX_TOKENS", &c.LLM.Budget.MaxTokens)
+	flt("LLM_BUDGET_MAX_PREMIUM_REQUESTS", &c.LLM.Budget.MaxPremiumRequests)
 	str("OPENAI_BASE_URL", &c.LLM.OpenAI.BaseURL)
 	str("OPENAI_MODEL", &c.LLM.OpenAI.Model)
 	str("OPENAI_API_KEY", &c.LLM.OpenAI.APIKey)
@@ -335,6 +362,8 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) {
 	dur("WATCH_INTERVAL", &c.Watch.Interval)
 	str("WATCH_STATE_FILE", &c.Watch.StateFile)
 	dur("WATCH_REASSESS_AFTER", &c.Watch.ReassessAfter)
+	integer("WATCH_CONCURRENCY", &c.Watch.Concurrency)
+	str("WATCH_LISTEN", &c.Watch.Listen)
 	dur("TIMEOUT", &c.Timeout)
 
 	// Secret indirections: only fill when the direct value is empty.
@@ -365,6 +394,15 @@ func (c *Config) Validate() error {
 	}
 	if c.LLM.MinConfidence < 0 || c.LLM.MinConfidence > 1 {
 		errs = append(errs, fmt.Errorf("llm.min_confidence %v must be within [0,1]", c.LLM.MinConfidence))
+	}
+	if c.BOMHort.RateLimit < 0 || c.BOMHort.RateWindow < 0 {
+		errs = append(errs, errors.New("bomhort.rate_limit and bomhort.rate_window must not be negative"))
+	}
+	if c.Watch.Concurrency < 0 {
+		errs = append(errs, errors.New("watch.concurrency must not be negative"))
+	}
+	if b := c.LLM.Budget; b.MaxCalls < 0 || b.MaxTokens < 0 || b.MaxPremiumRequests < 0 {
+		errs = append(errs, errors.New("llm.budget limits must not be negative"))
 	}
 	if c.Cache.TTL < 0 {
 		errs = append(errs, fmt.Errorf("cache.ttl must not be negative"))
