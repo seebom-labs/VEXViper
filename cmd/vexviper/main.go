@@ -145,6 +145,7 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	out := fs.String("out", "", "output directory for <name>.vexviper.openvex.json (default from config; \"-\" disables the file)")
 	toStdout := fs.Bool("stdout", false, "also print the document to stdout")
 	upload := fs.Bool("upload", false, "upload the document to BOMHort (needs api key)")
+	gitPublish := fs.Bool("git", false, "commit the document to the vex.git repository and open a review PR (default from config vex.git.enabled)")
 	regenerate := fs.Bool("regenerate", false, "also re-assess findings that already carry a vex_status, except settled ones (not_affected, fixed)")
 	force := fs.Bool("force", false, "hard regenerate: re-assess every finding, including not_affected/fixed (implies --regenerate)")
 	noCache := fs.Bool("no-cache", false, "do not reuse cached assessments (results are still written to the cache)")
@@ -179,6 +180,7 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		ReassessAfter: cfg.Watch.ReassessAfter,
 		OutDir:        outDir,
 		Upload:        *upload || cfg.VEX.Upload,
+		Publish:       *gitPublish || cfg.VEX.Git.Enabled,
 		Regenerate:    *regenerate || *force || cfg.VEX.Regenerate,
 		Force:         *force,
 		NoCache:       *noCache,
@@ -257,6 +259,20 @@ func printSummary(w io.Writer, res *pipeline.Outcome) {
 	if res.Upload != nil {
 		fmt.Fprintf(w, "  uploaded:          status=%s job=%s sha256=%s\n", res.Upload.Status, res.Upload.JobID, res.Upload.SHA256Hash)
 	}
+	if g := res.Published; g != nil {
+		switch {
+		case g.Unchanged:
+			fmt.Fprintf(w, "  git:               unchanged (%s on %s)\n", g.Path, g.Branch)
+		case g.PRURL != "":
+			verb := "opened"
+			if g.PRUpdated {
+				verb = "updated"
+			}
+			fmt.Fprintf(w, "  git:               %s → %s (%s PR %s)\n", g.Path, g.Branch, verb, g.PRURL)
+		default:
+			fmt.Fprintf(w, "  git:               %s → %s @ %s\n", g.Path, g.Branch, g.Commit[:min(12, len(g.Commit))])
+		}
+	}
 }
 
 func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
@@ -268,6 +284,7 @@ func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
 	state := fs.String("state", "", "state file path (default from config)")
 	out := fs.String("out", "", "output directory (default from config)")
 	upload := fs.Bool("upload", false, "upload generated documents to BOMHort")
+	gitPublish := fs.Bool("git", false, "commit generated documents to the vex.git repository (default from config vex.git.enabled)")
 	once := fs.Bool("once", false, "run a single pass and exit (for CronJobs)")
 	skipZero := fs.Bool("skip-zero", true, "ignore SBOMs without vulnerabilities")
 	concurrency := fs.Int("concurrency", 0, "SBOMs processed in parallel (default from config watch.concurrency)")
@@ -289,6 +306,7 @@ func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
 		StateFile:     cfg.Watch.StateFile,
 		OutDir:        cfg.VEX.OutDir,
 		Upload:        *upload || cfg.VEX.Upload,
+		Publish:       *gitPublish || cfg.VEX.Git.Enabled,
 		Once:          *once,
 		SkipZero:      *skipZero,
 		ReassessAfter: cfg.Watch.ReassessAfter,
@@ -327,7 +345,7 @@ func cmdWatch(ctx context.Context, args []string, stderr io.Writer) error {
 		}()
 		log.Info("serving metrics", "addr", ln.Addr().String(), "endpoints", "/metrics /healthz")
 	}
-	log.Info("starting watch", "bomhort", cfg.BOMHort.URL, "interval", opts.Interval, "upload", opts.Upload, "once", opts.Once, "concurrency", opts.Concurrency)
+	log.Info("starting watch", "bomhort", cfg.BOMHort.URL, "interval", opts.Interval, "upload", opts.Upload, "git", opts.Publish, "once", opts.Once, "concurrency", opts.Concurrency)
 	err = p.Watch(ctx, p.BOMHort.(*bomhort.Client), opts)
 	if errors.Is(err, context.Canceled) {
 		return nil

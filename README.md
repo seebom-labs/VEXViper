@@ -208,6 +208,7 @@ every key overridable by `VEXVIPER_<SECTION>_<KEY>` and secrets via `*_env` indi
 | `repo.{cache_dir,override,clone,govulncheck}` | `VEXVIPER_REPO_*` | `.vexviper-cache`, clone+govulncheck on | product repo handling |
 | `repo.sboms[]{match,repo}` | — | | per-SBOM repository pins (glob match, `{version}` placeholder) |
 | `vex.{author,author_role,supplier,namespace,out_dir,upload,regenerate}` | `VEXVIPER_VEX_*` | `VEXViper`, `automated triage (LLM-assisted)` | document metadata & output |
+| `vex.git.{enabled,repo,branch,path,branch_prefix,pr,token_env,sign_off}` | `VEXVIPER_VEX_GIT_*` / `GITHUB_TOKEN` | off, `main`, `vex/`, `vexviper/`, PR on | GitOps review mode: commit documents, open a PR per product |
 | `watch.{interval,state_file,reassess_after}` | `VEXVIPER_WATCH_*` | `15m`, TTL off | poller & periodic re-assessment |
 | `watch.{concurrency,listen}` | `VEXVIPER_WATCH_CONCURRENCY`, `VEXVIPER_WATCH_LISTEN` | `1`, off | parallel SBOMs per pass; `/metrics` + `/healthz` address |
 | `cache.{enabled,dir,ttl}` | `VEXVIPER_CACHE_*` | on, `<repo.cache_dir>/assessments`, never | assessment cache shared across SBOMs |
@@ -269,6 +270,39 @@ Assessment schema: `status`, `justification`, `impact_statement`, `action_statem
 * `fixed` requires a known `fixed_version` ≤ installed version;
 * every statement passes go-vex `Statement.Validate()`; `status_notes` records provider,
   confidence and reasoning; `tooling` records `vexviper/<version> provider=<name>`.
+
+### Review-first GitOps mode (`vex.git`)
+
+Instead of (or before) uploading straight into BOMHort, VEXViper can **commit every
+document to a git repository and open a pull request per product**, so humans review LLM
+drafts in a normal code-review flow and the VEX history is auditable:
+
+```yaml
+vex:
+  git:
+    enabled: true
+    repo: https://github.com/acme/vex-statements.git   # or git@github.com:acme/vex-statements.git
+    branch: main            # base branch
+    path: vex               # directory inside the repo
+    branch_prefix: vexviper/  # one review branch per product ("" = commit straight to `branch`)
+    pr: true                # open/update a GitHub PR (needs a token with contents+pull_requests write)
+    token_env: GITHUB_TOKEN # also authenticates https pushes; ssh remotes use the ambient agent
+    sign_off: true          # DCO trailer
+```
+
+`vexviper generate --git` / `vexviper watch --git` (or `enabled: true`) then:
+
+1. clones/fetches the repo (`<repo.cache_dir>/gitops/…`), resets a review branch
+   `vexviper/<product-slug>` onto the current base — a stale branch never resurrects old
+   statements;
+2. writes `<path>/<name>.vexviper.openvex.json`; identical content is a no-op;
+3. commits (author from `author_name`/`author_email`, optional `-s`), force-pushes the review
+   branch (bot-owned) and opens **or updates** the open PR for it with a review checklist.
+
+Tokens never appear on the command line (`GIT_CONFIG_*` env headers) and are redacted from
+errors and logs. Merging does not upload anything: point BOMHort's VEX ingestion or a CI job
+(`vexviper generate --upload`) at the merged files, or run with both `--git` and `--upload`
+when you only want the audit trail.
 
 ## MCP server
 
@@ -364,12 +398,13 @@ cmd/vexviper/          CLI (generate | watch | mcp-serve | version)
 internal/bomhort/      REST client (429 back-off, sliding-window rate limiter) + bomhorttest fake server
 internal/sbom/         minimal SPDX/CycloneDX reader — only for repository hints
 internal/repo/         PURL/VCS → repository resolution, shallow git clone cache
-internal/evidence/     version compare, dependency depth, govulncheck (multi-module), symbol grep
+internal/evidence/     version compare, dependency depth, govulncheck (multi-module), symbol grep, non-Go manifest/import scan
 internal/osv/          OSV vuln detail client (context for the LLM)
 internal/llm/          Provider interface, prompt, usage accounting + budget, heuristic | openai/github | copilot | mcptool | mock
 internal/assesscache/  verdict cache keyed by provider · commit · finding · evidence fingerprint
 internal/vexgen/       assessments → go-vex document, guardrails, validation
 internal/pipeline/     orchestration, upload verification, watch loop (worker pool), Prometheus metrics
+internal/gitops/       review-first publishing: git commit/push + GitHub PR per product (git CLI + net/http)
 internal/mcpserver/    VEXViper's own MCP server
 test/integration/      -tags integration tests against a live BOMHort
 hack/                  E2E compose + script

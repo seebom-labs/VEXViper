@@ -89,6 +89,8 @@ type WatchOptions struct {
 	StateFile string
 	OutDir    string
 	Upload    bool
+	// Publish commits documents to the configured git repository.
+	Publish bool
 	// Once runs a single pass and returns (useful for CronJobs and tests).
 	Once bool
 	// SkipZero ignores SBOMs without vulnerabilities.
@@ -189,7 +191,7 @@ func (p *Pipeline) watchPass(ctx context.Context, lister SBOMLister, state *Watc
 	worker := func() {
 		defer wg.Done()
 		for s := range queue {
-			out, err := p.Run(ctx, RunOptions{SBOMRef: s.ID, OutDir: opts.OutDir, Upload: opts.Upload, ReassessAfter: opts.ReassessAfter})
+			out, err := p.Run(ctx, RunOptions{SBOMRef: s.ID, OutDir: opts.OutDir, Upload: opts.Upload, Publish: opts.Publish, ReassessAfter: opts.ReassessAfter})
 			mu.Lock()
 			if err != nil {
 				errs = append(errs, fmt.Errorf("sbom %s: %w", s.ID, err))

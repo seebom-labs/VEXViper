@@ -82,6 +82,10 @@ Secrets: one Secret with `api-key` (BOMHort) and optionally `openai-api-key`.
   `under_investigation` unless explicitly allowed.
 * Upload is opt-in; the default is a reviewable file. `author_role` and `status_notes` are
   transparent about automation and confidence.
+* **Review-first GitOps** (`vex.git`): documents are committed to a repository and proposed
+  as one pull request per product; humans merge, BOMHort (or a CI job with `--upload`)
+  ingests the merged files. Review branches are rebuilt from the base branch every run, so
+  a PR always shows the current draft, and identical content produces no commit.
 * No SBOM content is sent anywhere except to the configured provider; with `heuristic`
   nothing leaves the machine besides the git clone and OSV lookups.
 

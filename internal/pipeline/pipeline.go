@@ -23,6 +23,7 @@ import (
 	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/gitops"
 	"github.com/seebom-labs/vexviper/internal/llm"
 	"github.com/seebom-labs/vexviper/internal/osv"
 	"github.com/seebom-labs/vexviper/internal/repo"
@@ -65,7 +66,14 @@ type Pipeline struct {
 	Metrics *Metrics
 	// Cache reuses verdicts across SBOMs (nil = disabled).
 	Cache *assesscache.Store
-	Log   *slog.Logger
+	// Publisher commits documents to a git repository for review (nil = off).
+	Publisher VEXPublisher
+	Log       *slog.Logger
+}
+
+// VEXPublisher is implemented by gitops.Publisher.
+type VEXPublisher interface {
+	Publish(ctx context.Context, doc gitops.Document) (*gitops.Result, error)
 }
 
 // New builds a pipeline from config with real dependencies.
@@ -102,6 +110,10 @@ func New(cfg config.Config, log *slog.Logger) (*Pipeline, error) {
 	}
 	if cfg.Cache.Enabled {
 		p.Cache = assesscache.New(cfg.CacheDir(), cfg.Cache.TTL)
+	}
+	if cfg.VEX.Git.Enabled {
+		p.Publisher = gitops.New(cfg.VEX.Git, cfg.GitWorkDir(), log)
+		log.Info("git publishing active", "repo", gitops.RedactURL(cfg.VEX.Git.Repo), "branch", cfg.VEX.Git.Branch, "path", cfg.VEX.Git.Path, "pr", cfg.VEX.Git.PR)
 	}
 	p.Evidence = &evidence.Collector{OSV: osv.New("", nil)}
 	if cfg.Repo.Govulncheck {
@@ -208,6 +220,9 @@ type RunOptions struct {
 	OutDir string
 	// Upload pushes the document to BOMHort.
 	Upload bool
+	// Publish commits the document to the configured git repository
+	// (Pipeline.Publisher must be set).
+	Publish bool
 	// Regenerate re-assesses findings that already carry a vex_status,
 	// except settled verdicts (not_affected, fixed): re-asking the provider
 	// about those only burns tokens. Use Force to revisit them too.
@@ -252,6 +267,29 @@ type Outcome struct {
 	Guardrails  []vexgen.Guardrail
 	Assessments []AssessmentRecord
 	Upload      *bomhort.UploadResult
+	// Published reports the git commit / pull request when Publish was set.
+	Published *gitops.Result
+}
+
+// Summary renders the statement counts for humans (commit/PR bodies).
+func (o *Outcome) Summary() string {
+	var parts []string
+	for _, st := range []vex.Status{vex.StatusNotAffected, vex.StatusFixed, vex.StatusAffected, vex.StatusUnderInvestigation} {
+		if n := o.Counts[st]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d× %s", n, st))
+		}
+	}
+	s := fmt.Sprintf("%d finding(s), %d statement(s)", o.Findings, len(o.Assessments))
+	if len(parts) > 0 {
+		s += ": " + strings.Join(parts, ", ")
+	}
+	if len(o.Guardrails) > 0 {
+		s += fmt.Sprintf("; %d guardrail(s) applied", len(o.Guardrails))
+	}
+	if o.Deferred > 0 {
+		s += fmt.Sprintf("; %d deferred (budget)", o.Deferred)
+	}
+	return s
 }
 
 // AssessmentRecord is one finding's verdict for reporting.
@@ -420,6 +458,31 @@ func (p *Pipeline) run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 			return nil, fmt.Errorf("write %s: %w", out.Path, err)
 		}
 		log.Info("wrote VEX document", "path", out.Path, "statements", len(built.Document.Statements))
+	}
+
+	if opts.Publish {
+		switch {
+		case p.Publisher == nil:
+			return out, errors.New("publish requested but vex.git is not configured")
+		case len(built.Document.Statements) == 0:
+			log.Info("nothing to publish: no statements")
+		default:
+			r, err := p.Publisher.Publish(ctx, gitops.Document{
+				Filename: out.Filename,
+				Content:  doc,
+				Product:  nonEmpty(res.Product.DocumentName, nonEmpty(filepath.Base(res.Product.SourceFile), res.Product.SBOMID)),
+				Summary:  out.Summary(),
+			})
+			if r != nil {
+				out.Published = r
+			}
+			if err != nil {
+				return out, fmt.Errorf("publish: %w", err)
+			}
+			if r.Unchanged {
+				log.Info("git repository already has this document", "path", r.Path, "branch", r.Branch)
+			}
+		}
 	}
 
 	if opts.Upload {
@@ -748,4 +811,11 @@ func (p *Pipeline) Wait(ctx context.Context, docID string, timeout time.Duration
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+func nonEmpty(v, def string) string {
+	if v != "" {
+		return v
+	}
+	return def
 }

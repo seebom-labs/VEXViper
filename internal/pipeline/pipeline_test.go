@@ -18,9 +18,11 @@ import (
 	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/gitops"
 	"github.com/seebom-labs/vexviper/internal/llm"
 	"github.com/seebom-labs/vexviper/internal/repo"
 	"github.com/seebom-labs/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/vexgen"
 )
 
 type fakeBOMHort struct {
@@ -779,5 +781,76 @@ func TestVerifyAndWaitApplied(t *testing.T) {
 	out.Assessments = append(out.Assessments, AssessmentRecord{VulnID: "X", PURL: "pkg:golang/x@v1", Status: vex.StatusAffected})
 	if _, err := p.WaitApplied(ctx, out, time.Minute); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+type fakePublisher struct {
+	docs []gitops.Document
+	res  *gitops.Result
+	err  error
+}
+
+func (f *fakePublisher) Publish(_ context.Context, d gitops.Document) (*gitops.Result, error) {
+	f.docs = append(f.docs, d)
+	return f.res, f.err
+}
+
+func TestRunPublishesToGit(t *testing.T) {
+	bh := bomhortFixture(t)
+	mock := &llm.Mock{ByVulnID: map[string]llm.Assessment{
+		"GO-2025-0001": {Status: vex.StatusAffected, ActionStatement: "upgrade", Confidence: 0.9, Reasoning: "r"},
+	}}
+	p := newTestPipeline(t, bh, mock, nil)
+	pub := &fakePublisher{res: &gitops.Result{Branch: "vexviper/bomhort", Commit: "abc", Path: "vex/x.json", PRURL: "https://gh/pr/1", PRNumber: 1}}
+	p.Publisher = pub
+
+	out, err := p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Publish: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.docs) != 1 {
+		t.Fatalf("publisher called %d times", len(pub.docs))
+	}
+	d := pub.docs[0]
+	if d.Filename != out.Filename || string(d.Content) != string(out.Document) || d.Product == "" {
+		t.Fatalf("doc = %+v", d)
+	}
+	if !strings.Contains(d.Summary, "2 finding(s)") || !strings.Contains(d.Summary, "affected") {
+		t.Fatalf("summary = %q", d.Summary)
+	}
+	if out.Published == nil || out.Published.PRURL != "https://gh/pr/1" {
+		t.Fatalf("Published = %+v", out.Published)
+	}
+	if len(bh.uploads) != 0 {
+		t.Fatal("publish must not upload")
+	}
+}
+
+func TestRunPublishErrors(t *testing.T) {
+	bh := bomhortFixture(t)
+	p := newTestPipeline(t, bh, llm.Heuristic{}, nil)
+	if _, err := p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Publish: true}); err == nil || !strings.Contains(err.Error(), "vex.git") {
+		t.Fatalf("expected configuration error, got %v", err)
+	}
+	pub := &fakePublisher{res: &gitops.Result{Branch: "b", Commit: "c"}, err: errors.New("HTTP 403")}
+	p.Publisher = pub
+	out, err := p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1", Publish: true})
+	if err == nil || !strings.Contains(err.Error(), "publish: HTTP 403") {
+		t.Fatalf("err = %v", err)
+	}
+	if out == nil || out.Published == nil || out.Published.Commit != "c" || len(out.Document) == 0 {
+		t.Fatalf("outcome must carry the partial result: %+v", out)
+	}
+}
+
+func TestOutcomeSummary(t *testing.T) {
+	o := &Outcome{Findings: 5, Counts: map[vex.Status]int{vex.StatusNotAffected: 2, vex.StatusUnderInvestigation: 1}, Assessments: make([]AssessmentRecord, 3), Guardrails: make([]vexgen.Guardrail, 1), Deferred: 2}
+	got := o.Summary()
+	want := "5 finding(s), 3 statement(s): 2× not_affected, 1× under_investigation; 1 guardrail(s) applied; 2 deferred (budget)"
+	if got != want {
+		t.Fatalf("Summary = %q\nwant      %q", got, want)
+	}
+	if got := (&Outcome{}).Summary(); got != "0 finding(s), 0 statement(s)" {
+		t.Fatalf("empty = %q", got)
 	}
 }

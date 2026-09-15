@@ -33,6 +33,26 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.bomhort.url | quote }}
 - name: VEXVIPER_VEX_UPLOAD
   value: {{ .Values.upload | quote }}
+{{- if .Values.git.enabled }}
+- name: VEXVIPER_VEX_GIT_ENABLED
+  value: "true"
+- name: VEXVIPER_VEX_GIT_REPO
+  value: {{ required "git.repo is required when git.enabled" .Values.git.repo | quote }}
+- name: VEXVIPER_VEX_GIT_BRANCH
+  value: {{ .Values.git.branch | quote }}
+- name: VEXVIPER_VEX_GIT_PATH
+  value: {{ .Values.git.path | quote }}
+- name: VEXVIPER_VEX_GIT_BRANCH_PREFIX
+  value: {{ .Values.git.branchPrefix | quote }}
+- name: VEXVIPER_VEX_GIT_PR
+  value: {{ .Values.git.pr | quote }}
+- name: VEXVIPER_VEX_GIT_SIGN_OFF
+  value: {{ .Values.git.signOff | quote }}
+{{- with .Values.git.apiUrl }}
+- name: VEXVIPER_VEX_GIT_API_URL
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
 - name: BOMHORT_API_KEY
   valueFrom:
     secretKeyRef:

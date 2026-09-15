@@ -12,11 +12,25 @@ schedule: "0 */6 * * *"
 
 bomhort:
   url: http://bomhort-api-gateway:8080
-  # Secret with keys `api-key` (X-API-Key) and optionally `openai-api-key` / `github-token`.
+  # Secret with keys `api-key` (X-API-Key) and optionally `openai-api-key` / `github-token`
+  # (GitHub Models and/or `git` publishing).
   existingSecret: ""
   apiKey: ""         # used to create a Secret when existingSecret is empty
 
 upload: true
+
+# Review-first GitOps: commit documents to a repository and open a PR per product instead
+# of (or in addition to) uploading. Needs `github-token` in the Secret (contents + pull
+# requests write) for https pushes and the PR API.
+git:
+  enabled: false
+  repo: ""            # https://github.com/acme/vex-statements.git
+  branch: main
+  path: vex
+  branchPrefix: vexviper/
+  pr: true
+  apiUrl: ""          # GHES: https://ghe.example.com/api/v3
+  signOff: false
 
 # Rendered to /etc/vexviper/vexviper.yaml (bomhort.url and secrets are injected via env).
 config:

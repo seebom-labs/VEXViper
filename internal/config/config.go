@@ -77,6 +77,14 @@ func (c Config) CacheDir() string {
 	return filepath.Join(c.Repo.CacheDir, "assessments")
 }
 
+// GitWorkDir returns the effective clone directory of the GitOps publisher.
+func (c Config) GitWorkDir() string {
+	if c.VEX.Git.WorkDir != "" {
+		return c.VEX.Git.WorkDir
+	}
+	return filepath.Join(c.Repo.CacheDir, "gitops")
+}
+
 // BOMHort holds connection settings for the BOMHort REST API.
 type BOMHort struct {
 	URL          string `yaml:"url"`
@@ -214,6 +222,40 @@ type VEX struct {
 	// except settled verdicts (not_affected, fixed). A hard regenerate is
 	// only available via `vexviper generate --force`.
 	Regenerate bool `yaml:"regenerate"`
+	// Git publishes documents to a git repository (review-first GitOps).
+	Git Git `yaml:"git"`
+}
+
+// Git configures the GitOps publisher: generated OpenVEX documents are
+// committed to a repository and, optionally, proposed as a pull request so
+// humans review LLM drafts before BOMHort ingests them.
+type Git struct {
+	Enabled bool `yaml:"enabled"`
+	// Repo is the clone URL (https://github.com/org/vex.git or git@…).
+	Repo string `yaml:"repo"`
+	// Branch is the base branch documents are proposed against (default main).
+	Branch string `yaml:"branch"`
+	// Path is the directory inside the repository (default "vex").
+	Path string `yaml:"path"`
+	// BranchPrefix names per-product review branches (default "vexviper/").
+	// "" commits directly to Branch instead.
+	BranchPrefix string `yaml:"branch_prefix"`
+	// PR opens or updates a GitHub pull request per review branch.
+	PR bool `yaml:"pr"`
+	// APIURL is the GitHub REST endpoint (default https://api.github.com;
+	// GHES: https://ghe.example.com/api/v3).
+	APIURL string `yaml:"api_url"`
+	// Token authenticates https pushes and the PR API. TokenEnv names the
+	// environment variable to read it from (default GITHUB_TOKEN).
+	Token    string `yaml:"token"`
+	TokenEnv string `yaml:"token_env"`
+	// AuthorName/AuthorEmail identify the commit author.
+	AuthorName  string `yaml:"author_name"`
+	AuthorEmail string `yaml:"author_email"`
+	// SignOff appends a DCO Signed-off-by trailer.
+	SignOff bool `yaml:"sign_off"`
+	// WorkDir caches clones (default "<repo.cache_dir>/gitops").
+	WorkDir string `yaml:"work_dir"`
 }
 
 // Watch configures the polling loop.
@@ -253,9 +295,10 @@ func Default() Config {
 			Copilot: Copilot{Command: "copilot", Timeout: 180 * time.Second},
 			MCP:     MCP{Transport: MCPTransportStdio, Tool: "assess_vulnerability", Timeout: 120 * time.Second},
 		},
-		Repo:    Repo{CacheDir: ".vexviper-cache", Clone: true, Govulncheck: true},
-		Cache:   Cache{Enabled: true},
-		VEX:     VEX{Author: "VEXViper", AuthorRole: "automated triage (LLM-assisted)", Namespace: "https://vexviper.dev/docs", OutDir: "."},
+		Repo:  Repo{CacheDir: ".vexviper-cache", Clone: true, Govulncheck: true},
+		Cache: Cache{Enabled: true},
+		VEX: VEX{Author: "VEXViper", AuthorRole: "automated triage (LLM-assisted)", Namespace: "https://vexviper.dev/docs", OutDir: ".",
+			Git: Git{Branch: "main", Path: "vex", BranchPrefix: "vexviper/", PR: true, APIURL: "https://api.github.com", TokenEnv: "GITHUB_TOKEN", AuthorName: "VEXViper", AuthorEmail: "vexviper@noreply.local"}},
 		Watch:   Watch{Interval: 15 * time.Minute, StateFile: ".vexviper-cache/watch-state.json", Concurrency: 1},
 		Timeout: 30 * time.Minute,
 	}
@@ -359,6 +402,18 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) {
 	str("VEX_OUT_DIR", &c.VEX.OutDir)
 	boolean("VEX_UPLOAD", &c.VEX.Upload)
 	boolean("VEX_REGENERATE", &c.VEX.Regenerate)
+	boolean("VEX_GIT_ENABLED", &c.VEX.Git.Enabled)
+	str("VEX_GIT_REPO", &c.VEX.Git.Repo)
+	str("VEX_GIT_BRANCH", &c.VEX.Git.Branch)
+	str("VEX_GIT_PATH", &c.VEX.Git.Path)
+	str("VEX_GIT_BRANCH_PREFIX", &c.VEX.Git.BranchPrefix)
+	boolean("VEX_GIT_PR", &c.VEX.Git.PR)
+	str("VEX_GIT_API_URL", &c.VEX.Git.APIURL)
+	str("VEX_GIT_TOKEN", &c.VEX.Git.Token)
+	str("VEX_GIT_AUTHOR_NAME", &c.VEX.Git.AuthorName)
+	str("VEX_GIT_AUTHOR_EMAIL", &c.VEX.Git.AuthorEmail)
+	boolean("VEX_GIT_SIGN_OFF", &c.VEX.Git.SignOff)
+	str("VEX_GIT_WORK_DIR", &c.VEX.Git.WorkDir)
 	dur("WATCH_INTERVAL", &c.Watch.Interval)
 	str("WATCH_STATE_FILE", &c.Watch.StateFile)
 	dur("WATCH_REASSESS_AFTER", &c.Watch.ReassessAfter)
@@ -375,6 +430,11 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) {
 	if c.LLM.OpenAI.APIKey == "" && c.LLM.OpenAI.APIKeyEnv != "" {
 		if v, ok := lookup(c.LLM.OpenAI.APIKeyEnv); ok {
 			c.LLM.OpenAI.APIKey = v
+		}
+	}
+	if c.VEX.Git.Token == "" && c.VEX.Git.TokenEnv != "" {
+		if v, ok := lookup(c.VEX.Git.TokenEnv); ok {
+			c.VEX.Git.Token = v
 		}
 	}
 	if c.LLM.GitHub.Token == "" && c.LLM.GitHub.TokenEnv != "" {
@@ -406,6 +466,20 @@ func (c *Config) Validate() error {
 	}
 	if c.Cache.TTL < 0 {
 		errs = append(errs, fmt.Errorf("cache.ttl must not be negative"))
+	}
+	if g := c.VEX.Git; g.Enabled {
+		if g.Repo == "" {
+			errs = append(errs, errors.New("vex.git.repo is required when vex.git.enabled"))
+		}
+		if g.Branch == "" {
+			errs = append(errs, errors.New("vex.git.branch must not be empty"))
+		}
+		if g.PR && g.BranchPrefix == "" {
+			errs = append(errs, errors.New("vex.git.pr needs a vex.git.branch_prefix (direct commits to the base branch have no PR)"))
+		}
+		if g.PR && g.Token == "" {
+			errs = append(errs, fmt.Errorf("vex.git.token is empty (set %s or vex.git.token_env); required for vex.git.pr", nonEmpty(g.TokenEnv, "VEXVIPER_VEX_GIT_TOKEN")))
+		}
 	}
 	for i, e := range c.Repo.SBOMs {
 		if e.Match == "" || e.Repo == "" {

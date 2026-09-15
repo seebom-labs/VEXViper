@@ -109,6 +109,33 @@ func TestApplyEnvMCPArgs(t *testing.T) {
 	}
 }
 
+func TestGitConfigDefaultsEnvAndValidation(t *testing.T) {
+	cfg := Default()
+	g := cfg.VEX.Git
+	if g.Enabled || g.Branch != "main" || g.Path != "vex" || g.BranchPrefix != "vexviper/" || !g.PR || g.TokenEnv != "GITHUB_TOKEN" || g.APIURL != "https://api.github.com" {
+		t.Fatalf("defaults = %+v", g)
+	}
+	if got := cfg.GitWorkDir(); got != filepath.Join(cfg.Repo.CacheDir, "gitops") {
+		t.Fatalf("GitWorkDir = %q", got)
+	}
+	env := map[string]string{
+		"VEXVIPER_VEX_GIT_ENABLED": "true", "VEXVIPER_VEX_GIT_REPO": "https://github.com/acme/vex.git",
+		"VEXVIPER_VEX_GIT_BRANCH_PREFIX": "", "VEXVIPER_VEX_GIT_PR": "false", "VEXVIPER_VEX_GIT_SIGN_OFF": "true",
+		"VEXVIPER_VEX_GIT_WORK_DIR": "/tmp/w", "MY_GIT_TOKEN": "sekret",
+	}
+	cfg.VEX.Git.TokenEnv = "MY_GIT_TOKEN"
+	cfg.ApplyEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	g = cfg.VEX.Git
+	if !g.Enabled || g.Repo != "https://github.com/acme/vex.git" || g.BranchPrefix != "" || g.PR || !g.SignOff || g.Token != "sekret" || cfg.GitWorkDir() != "/tmp/w" {
+		t.Fatalf("after env = %+v", g)
+	}
+	// Direct commits without PR are valid without a token requirement.
+	cfg.VEX.Git.Token = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("direct-commit config should validate: %v", err)
+	}
+}
+
 func TestValidateErrors(t *testing.T) {
 	cases := map[string]func(*Config){
 		"bad provider":       func(c *Config) { c.LLM.Provider = "magic" },
@@ -122,6 +149,20 @@ func TestValidateErrors(t *testing.T) {
 		"mcp bad transport":  func(c *Config) { c.LLM.Provider = ProviderMCPTool; c.LLM.MCP.Transport = "carrier-pigeon" },
 		"mcp tool":           func(c *Config) { c.LLM.Provider = ProviderMCPTool; c.LLM.MCP.Command = "x"; c.LLM.MCP.Tool = "" },
 		"watch interval":     func(c *Config) { c.Watch.Interval = 0 },
+		"git needs repo":     func(c *Config) { c.VEX.Git.Enabled = true; c.VEX.Git.Token = "t" },
+		"git pr needs token": func(c *Config) { c.VEX.Git.Enabled = true; c.VEX.Git.Repo = "https://x/y/z" },
+		"git pr needs branch prefix": func(c *Config) {
+			c.VEX.Git.Enabled = true
+			c.VEX.Git.Repo = "https://x/y/z"
+			c.VEX.Git.Token = "t"
+			c.VEX.Git.BranchPrefix = ""
+		},
+		"git empty branch": func(c *Config) {
+			c.VEX.Git.Enabled = true
+			c.VEX.Git.Repo = "https://x/y/z"
+			c.VEX.Git.Token = "t"
+			c.VEX.Git.Branch = ""
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
