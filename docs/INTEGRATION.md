@@ -85,7 +85,21 @@ Secrets: one Secret with `api-key` (BOMHort) and optionally `openai-api-key`.
 * No SBOM content is sent anywhere except to the configured provider; with `heuristic`
   nothing leaves the machine besides the git clone and OSV lookups.
 
-## 5. Proposed upstream issue (seebom-labs/BOMHort)
+## 5. Upstream issues (seebom-labs/BOMHort)
+
+Filed as tracking epic [BOMHort#338](https://github.com/seebom-labs/BOMHort/issues/338):
+
+| Issue | Feature | Why VEXViper needs it |
+|---|---|---|
+| [#332](https://github.com/seebom-labs/BOMHort/issues/332) | `source_repo` / `source_ref` per SBOM | repo resolution without PURL guessing or `repo.sboms` pins |
+| [#333](https://github.com/seebom-labs/BOMHort/issues/333) | `since`/cursor listing, `vex_status=missing` filter | `watch` passes over 15k SBOMs without O(n) re-reads |
+| [#335](https://github.com/seebom-labs/BOMHort/issues/335) | one row per `(vuln_id, purl)`, latest statement wins, `vex_timestamp` | re-triage TTL without paging `/vex/statements` |
+| [#336](https://github.com/seebom-labs/BOMHort/issues/336) | idempotent upload + job status | know whether a pushed document matched anything |
+| [#334](https://github.com/seebom-labs/BOMHort/issues/334) | statement provenance + automated/human badge | make LLM drafts reviewable and auditable |
+| [#337](https://github.com/seebom-labs/BOMHort/issues/337) | outbound webhooks | trigger generation instead of polling |
+
+The original proposal text is kept below for context.
+
 
 > **Title:** Document VEXViper as a VEX-generation companion; expose `vex_justification` in the vulnerabilities API
 >
