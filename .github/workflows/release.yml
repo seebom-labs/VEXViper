@@ -102,7 +102,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - run: helm lint deploy/helm/vexviper
       - name: Package and push
         run: |
