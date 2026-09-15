@@ -149,7 +149,7 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	force := fs.Bool("force", false, "hard regenerate: re-assess every finding, including not_affected/fixed (implies --regenerate)")
 	noCache := fs.Bool("no-cache", false, "do not reuse cached assessments (results are still written to the cache)")
 	only := fs.String("only", "", "comma-separated vuln IDs to restrict to")
-	wait := fs.Duration("wait", 0, "after --upload, wait up to this long for BOMHort to ingest the document")
+	wait := fs.Duration("wait", 0, "after --upload, wait up to this long for BOMHort to ingest the document, then report which statements were applied / overridden / not matched")
 	reassess := fs.Duration("reassess-after", -1, "re-assess under_investigation/affected findings whose statement is older than this (default from config watch.reassess_after; 0 disables)")
 	if err := fs.Parse(args); err != nil {
 		return err

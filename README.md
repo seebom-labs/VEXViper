@@ -81,11 +81,15 @@ bin/vexviper generate --sbom kubelb-1.4.2 --repo kubermatic/kubelb@v1.4.2
 #       - match: "kubelb-*"          # glob on SBOM id | document_name | source_file
 #         repo: kubermatic/kubelb    # ref defaults to the version in the SBOM name (v1.4.2)
 
-# push it back and wait until BOMHort applied the statements
+# push it back, wait until BOMHort ingested it and report which statements were
+# applied / overridden by a newer statement / not matched
 BOMHORT_API_KEY=… bin/vexviper generate --sbom bomhort-0.6.1 --upload --wait 3m
 
 # watch everything, once (CronJob style)
 bin/vexviper watch --config examples/vexviper.yaml --once --upload
+
+# long-running watcher: 4 SBOMs in parallel, Prometheus metrics + health on :9090
+bin/vexviper watch --config vexviper.yaml --upload --concurrency 4 --listen :9090
 
 # be an MCP server for your LLM host
 bin/vexviper mcp-serve --config vexviper.yaml                      # stdio
@@ -323,15 +327,15 @@ Env: `BOMHORT_IMAGE_PREFIX`/`BOMHORT_IMAGE_TAG` to pick images, `--keep` to leav
 
 ```
 cmd/vexviper/          CLI (generate | watch | mcp-serve | version)
-internal/bomhort/      REST client + bomhorttest fake server
+internal/bomhort/      REST client (429 back-off, sliding-window rate limiter) + bomhorttest fake server
 internal/sbom/         minimal SPDX/CycloneDX reader — only for repository hints
 internal/repo/         PURL/VCS → repository resolution, shallow git clone cache
 internal/evidence/     version compare, dependency depth, govulncheck (multi-module), symbol grep
 internal/osv/          OSV vuln detail client (context for the LLM)
-internal/llm/          Provider interface, prompt, usage accounting, heuristic | openai/github | copilot | mcptool | mock
+internal/llm/          Provider interface, prompt, usage accounting + budget, heuristic | openai/github | copilot | mcptool | mock
 internal/assesscache/  verdict cache keyed by provider · commit · finding · evidence fingerprint
 internal/vexgen/       assessments → go-vex document, guardrails, validation
-internal/pipeline/     orchestration, watch loop
+internal/pipeline/     orchestration, upload verification, watch loop (worker pool), Prometheus metrics
 internal/mcpserver/    VEXViper's own MCP server
 test/integration/      -tags integration tests against a live BOMHort
 hack/                  E2E compose + script
