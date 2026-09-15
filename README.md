@@ -165,8 +165,27 @@ clones of the same repository are serialized. BOMHort's gateway allows ~100 requ
 client IP, so the client paces itself with `bomhort.rate_limit: 90` per `bomhort.rate_window: 10s`
 (default; `0` disables) and still backs off on `429`.
 
-Docker: `docker build -t vexviper . && docker run --rm -v $PWD/work:/work -e VEXVIPER_BOMHORT_URL=http://host:8080 vexviper generate --sbom …`
-(the image ships git + Go toolchain + govulncheck).
+## Install
+
+Every tag `vX.Y.Z` publishes binaries (linux/darwin, amd64/arm64, SPDX SBOM, checksums) on the
+[releases page](https://github.com/seebom-labs/VEXViper/releases), a multi-arch, cosign-signed
+image and the Helm chart as OCI artifact; `main` is available as `:main`.
+
+```sh
+# container (ships git + Go toolchain + govulncheck)
+docker run --rm -v $PWD/work:/work -e VEXVIPER_BOMHORT_URL=http://host:8080 \
+  ghcr.io/seebom-labs/vexviper:latest generate --sbom …
+cosign verify ghcr.io/seebom-labs/vexviper:latest \
+  --certificate-identity-regexp 'https://github.com/seebom-labs/VEXViper/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# Helm (CronJob by default; mode=deployment adds /metrics + probes, mode=mcp a Service)
+helm install vexviper oci://ghcr.io/seebom-labs/charts/vexviper --version 0.1.0 \
+  --set bomhort.url=http://bomhort-api-gateway:8080 --set mode=cronjob
+
+# from source
+go install github.com/seebom-labs/vexviper/cmd/vexviper@latest   # or: make build → bin/vexviper
+```
 
 ## Configuration
 

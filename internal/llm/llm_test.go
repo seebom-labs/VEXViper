@@ -16,8 +16,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/evidence"
-	"github.com/mfahlandt/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/source"
 )
 
 func report(items ...evidence.Item) *evidence.Report {

@@ -17,12 +17,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/evidence"
-	"github.com/mfahlandt/vexviper/internal/llm"
-	"github.com/mfahlandt/vexviper/internal/pipeline"
-	"github.com/mfahlandt/vexviper/internal/source"
-	"github.com/mfahlandt/vexviper/internal/vexgen"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/pipeline"
+	"github.com/seebom-labs/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/vexgen"
 )
 
 // SBOMLister is the extra BOMHort capability the server needs beyond the pipeline.

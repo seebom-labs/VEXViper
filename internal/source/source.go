@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/sbom"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/sbom"
 )
 
 // Finding is one (vulnerability, package) pair as BOMHort reports it. VulnID

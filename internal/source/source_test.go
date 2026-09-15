@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
 )
 
 type fakeAPI struct {

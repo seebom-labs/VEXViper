@@ -25,10 +25,10 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/config"
-	"github.com/mfahlandt/vexviper/internal/mcpserver"
-	"github.com/mfahlandt/vexviper/internal/pipeline"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/config"
+	"github.com/seebom-labs/vexviper/internal/mcpserver"
+	"github.com/seebom-labs/vexviper/internal/pipeline"
 )
 
 var version = "dev"

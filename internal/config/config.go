@@ -15,7 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/mfahlandt/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
 // EnvPrefix is the prefix for all environment variable overrides.

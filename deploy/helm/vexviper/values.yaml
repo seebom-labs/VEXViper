@@ -1,5 +1,5 @@
 image:
-  repository: ghcr.io/mfahlandt/vexviper
+  repository: ghcr.io/seebom-labs/vexviper
   tag: ""            # defaults to appVersion
   pullPolicy: IfNotPresent
 

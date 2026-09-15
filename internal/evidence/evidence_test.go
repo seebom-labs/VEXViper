@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mfahlandt/vexviper/internal/osv"
-	"github.com/mfahlandt/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/osv"
+	"github.com/seebom-labs/vexviper/internal/source"
 )
 
 func TestCompareVersions(t *testing.T) {

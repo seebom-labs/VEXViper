@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mfahlandt/vexviper/internal/evidence"
-	"github.com/mfahlandt/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
 // Version is mixed into every key; bump it when the prompt or schema changes

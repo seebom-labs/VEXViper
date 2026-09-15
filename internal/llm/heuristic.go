@@ -7,7 +7,7 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/evidence"
 )
 
 // Heuristic is a rules-only provider. It never needs network access or

@@ -104,7 +104,7 @@ The original proposal text is kept below for context.
 > **Title:** Document VEXViper as a VEX-generation companion; expose `vex_justification` in the vulnerabilities API
 >
 > BOMHort can consume OpenVEX but has no way to produce it, so every finding stays
-> effective until a human writes VEX. [VEXViper](https://github.com/mfahlandt/VEXViper) is
+> effective until a human writes VEX. [VEXViper](https://github.com/seebom-labs/VEXViper) is
 > an out-of-tree Go sidecar that reads `/api/v1/sboms/{id}/vulnerabilities`, resolves the
 > product repository, runs govulncheck/collects evidence, asks a configurable assessment
 > provider (rules / OpenAI-compatible / MCP tool) and uploads a go-vex-validated OpenVEX

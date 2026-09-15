@@ -24,8 +24,8 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/mfahlandt/vexviper/internal/osv"
-	"github.com/mfahlandt/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/osv"
+	"github.com/seebom-labs/vexviper/internal/source"
 )
 
 // Kind classifies a piece of evidence.

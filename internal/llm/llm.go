@@ -11,7 +11,7 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/evidence"
 )
 
 // Request is everything a provider gets about one finding.

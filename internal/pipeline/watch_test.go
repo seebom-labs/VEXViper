@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mfahlandt/vexviper/internal/assesscache"
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/assesscache"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
 type fakeLister struct {

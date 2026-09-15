@@ -19,9 +19,9 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/config"
-	"github.com/mfahlandt/vexviper/internal/pipeline"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/config"
+	"github.com/seebom-labs/vexviper/internal/pipeline"
 )
 
 func env(t *testing.T, key string) string {

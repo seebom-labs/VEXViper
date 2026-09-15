@@ -11,10 +11,10 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/evidence"
-	"github.com/mfahlandt/vexviper/internal/llm"
-	"github.com/mfahlandt/vexviper/internal/osv"
-	"github.com/mfahlandt/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/osv"
+	"github.com/seebom-labs/vexviper/internal/source"
 )
 
 var update = flag.Bool("update", false, "update golden files")

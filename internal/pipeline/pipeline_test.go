@@ -14,13 +14,13 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/assesscache"
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/config"
-	"github.com/mfahlandt/vexviper/internal/evidence"
-	"github.com/mfahlandt/vexviper/internal/llm"
-	"github.com/mfahlandt/vexviper/internal/repo"
-	"github.com/mfahlandt/vexviper/internal/source"
+	"github.com/seebom-labs/vexviper/internal/assesscache"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/config"
+	"github.com/seebom-labs/vexviper/internal/evidence"
+	"github.com/seebom-labs/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/repo"
+	"github.com/seebom-labs/vexviper/internal/source"
 )
 
 type fakeBOMHort struct {

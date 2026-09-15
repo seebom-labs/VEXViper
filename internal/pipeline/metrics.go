@@ -10,7 +10,7 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
 // Metrics collects process-wide counters and renders them in the Prometheus

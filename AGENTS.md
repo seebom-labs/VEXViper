@@ -36,7 +36,7 @@ Packages (`internal/`):
 Other locations: `cmd/vexviper` (CLI, flags, summary), `test/integration` (`-tags=integration`, needs a live BOMHort), `hack/e2e-bomhort.sh` + `hack/docker-compose.e2e.yml` (isolated BOMHort stack on :18080, key `vexviper-e2e-key`), `deploy/helm/vexviper` (CronJob or Deployment), `docs/INTEGRATION.md` (API contract, deployment, safety posture, upstream findings), `examples/` (config, MCP client config, generated VEX for BOMHort 0.6.1).
 
 # Tech Stack
-- **Language:** Go (`go.mod` `go 1.25.x`; Dockerfile base Go 1.26). Module path `github.com/mfahlandt/vexviper`.
+- **Language:** Go (`go.mod` `go 1.25.x`; Dockerfile base Go 1.26). Module path `github.com/seebom-labs/vexviper`.
 - **Direct dependencies (keep minimal):** `openvex/go-vex`, `modelcontextprotocol/go-sdk`, `package-url/packageurl-go`, `golang.org/x/mod`, `gopkg.in/yaml.v3`. Everything else is stdlib (`net/http`, `log/slog`, `encoding/json`, `os/exec`).
 - **External tools at runtime (optional):** `git`, `go` + `govulncheck`, `copilot` CLI.
 - **Deployment:** Container image + Helm chart; Kubernetes CronJob (`watch --once`) is the default mode.
@@ -97,6 +97,7 @@ If `go` is not on PATH in your shell: `export PATH=$HOME/go/bin:$HOME/sdk/go<ver
 - Commits are **DCO signed-off** (`git commit -s`). **Do not add `Co-authored-by` trailers** — project rules forbid them.
 - Conventional, imperative subject lines (`Add …`, `Fix …`, `Keep …`), body explains the why.
 - PRs go to `seebom-labs/VEXViper` `main` from a feature branch on the fork; describe behaviour change, tests and doc updates.
+- **Releases:** pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml` → binaries + SPDX SBOM + checksums on the GitHub release, multi-arch image `ghcr.io/seebom-labs/vexviper:{X.Y.Z,X.Y,latest}` (cosign keyless), Helm chart `oci://ghcr.io/seebom-labs/charts/vexviper` (chart+app version = tag). `main` publishes `:main`. Bump `deploy/helm/vexviper/Chart.yaml` `version`/`appVersion` in the release commit; Dependabot (gomod/actions/docker, weekly) keeps deps current.
 
 # Boundaries
 - **Always do:** Write unit tests for every new package, provider, flag and guardrail. Run `make lint test` before pushing. Update `README.md`, `docs/INTEGRATION.md`, `examples/vexviper.yaml` and the Helm chart when adding config keys, flags, providers or MCP tools. Regenerate `examples/bomhort-0.6.1.openvex.json` via the E2E script when statement shape changes (normalise `tooling` to `vexviper/dev …`).

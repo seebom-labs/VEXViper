@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/llm"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
 // SBOMLister lists SBOMs (bomhort.Client.AllSBOMs).

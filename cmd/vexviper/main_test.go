@@ -16,8 +16,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openvex/go-vex/pkg/vex"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
-	"github.com/mfahlandt/vexviper/internal/bomhort/bomhorttest"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/bomhort/bomhorttest"
 )
 
 const sbomID = "11111111-1111-1111-1111-111111111111"

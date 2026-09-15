@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/mfahlandt/vexviper/internal/bomhort"
+	"github.com/seebom-labs/vexviper/internal/bomhort"
 )
 
 // Upload is one recorded POST /api/v1/sboms/upload.

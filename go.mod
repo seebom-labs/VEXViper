@@ -1,4 +1,4 @@
-module github.com/mfahlandt/vexviper
+module github.com/seebom-labs/vexviper
 
 go 1.25.9
 
