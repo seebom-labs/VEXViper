@@ -121,6 +121,29 @@ assessment of new findings; a TTL re-opens `under_investigation`/`affected` verd
 timestamp, re-uploads are idempotent. An upstream `vex_updated_at` on the vulnerabilities
 endpoint would remove the need to page through all statements (proposal 2/3 above).
 
+### Scale: many SBOMs, few distinct questions
+
+A BOMHort instance with 15 000 SBOMs typically describes a few hundred product builds.
+VEXViper's assessment cache (`cache.*`, README "Scaling to thousands of SBOMs") keys verdicts
+by provider, product commit, finding and an evidence fingerprint, so each distinct question
+is paid for once and reused for every SBOM that shares the build. What limits this today is
+BOMHort's data model, not VEXViper:
+
+* there is no per-SBOM **source repository / commit** field — VEXViper infers it from
+  PURLs and SBOM hints, which is where most misses come from (see proposal 1 in §5 and the
+  upstream issues linked there);
+* `GET /api/v1/sboms` has no `since`/cursor and `/vulnerabilities` no `vex_filter=missing`,
+  so `watch` must list everything each pass.
+
+SBOM producers can help: include the VCS URL **and exact commit** (SPDX `ExternalRef`
+`SECURITY`/`OTHER` + `packageSourceInfo`, CycloneDX `externalReferences[type=vcs]` +
+`pedigree.commits`), build metadata (Go version, build tags) and a stable product identifier.
+
+### Cost visibility
+
+Every run reports provider usage (calls, tokens, Copilot premium requests, model, cache hits)
+per finding, per SBOM and cumulatively in the watch state file; see README "Cost tracking".
+
 ## 7. Using a GitHub Copilot subscription as LLM source
 
 | Route | Programmatic? | Status |

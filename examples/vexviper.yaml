@@ -92,5 +92,14 @@ watch:
   # verdicts are never revisited automatically (use --force). 0 disables.
   reassess_after: 168h   # 7 days
 
+# Assessment cache: identical questions (same provider+model, product commit,
+# vuln, purl and evidence fingerprint) reuse the verdict instead of paying for
+# another provider call. Essential when thousands of SBOMs describe the same
+# few hundred product builds. --regenerate / --force / --no-cache bypass reads.
+cache:
+  enabled: true
+  dir: ""          # default: <repo.cache_dir>/assessments
+  ttl: 0           # 0 = entries live until commit or evidence changes; e.g. 720h to force re-asking monthly
+
 # Upper bound for one SBOM (clone + govulncheck + all assessments).
 timeout: 30m

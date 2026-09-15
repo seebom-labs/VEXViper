@@ -54,7 +54,8 @@ extraEnv: []
 #  - name: GITHUB_TOKEN
 #    valueFrom: { secretKeyRef: { name: gh, key: token } }
 
-# Persist the repo cache / watch state between runs (recommended for cronjob & deployment).
+# Persist the repo cache, assessment cache and watch state between runs
+# (recommended for cronjob & deployment; without it every run pays for every verdict again).
 persistence:
   enabled: false
   size: 10Gi

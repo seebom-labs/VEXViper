@@ -312,6 +312,7 @@ type generateIn struct {
 	Upload     bool   `json:"upload,omitempty"`
 	Regenerate bool   `json:"regenerate,omitempty"`
 	Force      bool   `json:"force,omitempty"`
+	NoCache    bool   `json:"no_cache,omitempty"`
 }
 
 type generateOut struct {
@@ -319,16 +320,17 @@ type generateOut struct {
 	Findings    int                         `json:"findings"`
 	Skipped     int                         `json:"skipped"`
 	Settled     int                         `json:"settled,omitempty"`
+	Usage       llm.Usage                   `json:"usage"`
 	RepoURL     string                      `json:"repo_url,omitempty"`
 	Assessments []pipeline.AssessmentRecord `json:"assessments"`
 }
 
 func (s *Server) generateVEX(ctx context.Context, _ *mcp.CallToolRequest, in generateIn) (*mcp.CallToolResult, generateOut, error) {
-	o, err := s.Pipeline.Run(ctx, pipeline.RunOptions{SBOMRef: in.SBOM, RepoOverride: in.Repo, OutDir: s.Pipeline.Cfg.VEX.OutDir, Upload: in.Upload, Regenerate: in.Regenerate || in.Force, Force: in.Force})
+	o, err := s.Pipeline.Run(ctx, pipeline.RunOptions{SBOMRef: in.SBOM, RepoOverride: in.Repo, OutDir: s.Pipeline.Cfg.VEX.OutDir, Upload: in.Upload, Regenerate: in.Regenerate || in.Force, Force: in.Force, NoCache: in.NoCache})
 	if err != nil {
 		return nil, generateOut{}, err
 	}
-	out := generateOut{Findings: o.Findings, Skipped: o.Skipped, Settled: o.Settled, RepoURL: o.RepoHow, Assessments: o.Assessments}
+	out := generateOut{Findings: o.Findings, Skipped: o.Skipped, Settled: o.Settled, Usage: o.Usage, RepoURL: o.RepoHow, Assessments: o.Assessments}
 	out.Filename, out.Path, out.Document, out.Guardrails = o.Filename, o.Path, toMap(o.Document), o.Guardrails
 	out.Counts = map[string]int{}
 	for k, v := range o.Counts {

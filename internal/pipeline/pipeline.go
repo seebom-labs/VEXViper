@@ -19,6 +19,7 @@ import (
 	"github.com/openvex/go-vex/pkg/vex"
 	"golang.org/x/mod/semver"
 
+	"github.com/mfahlandt/vexviper/internal/assesscache"
 	"github.com/mfahlandt/vexviper/internal/bomhort"
 	"github.com/mfahlandt/vexviper/internal/config"
 	"github.com/mfahlandt/vexviper/internal/evidence"
@@ -56,7 +57,9 @@ type Pipeline struct {
 	Provider llm.Provider
 	Cloner   Cloner
 	Evidence *evidence.Collector
-	Log      *slog.Logger
+	// Cache reuses verdicts across SBOMs (nil = disabled).
+	Cache *assesscache.Store
+	Log   *slog.Logger
 }
 
 // New builds a pipeline from config with real dependencies.
@@ -83,6 +86,9 @@ func New(cfg config.Config, log *slog.Logger) (*Pipeline, error) {
 	p.Provider = provider
 	if cfg.Repo.Clone {
 		p.Cloner = &repo.Cloner{CacheDir: cfg.Repo.CacheDir}
+	}
+	if cfg.Cache.Enabled {
+		p.Cache = assesscache.New(cfg.CacheDir(), cfg.Cache.TTL)
 	}
 	p.Evidence = &evidence.Collector{OSV: osv.New("", nil)}
 	if cfg.Repo.Govulncheck {
@@ -196,6 +202,9 @@ type RunOptions struct {
 	// Force is a hard regenerate: every finding is re-assessed regardless of
 	// its current status.
 	Force bool
+	// NoCache bypasses assessment-cache reads (results are still stored).
+	// Regenerate and Force imply it: re-asking is the point of those runs.
+	NoCache bool
 	// Only restricts to specific vuln IDs (empty = all).
 	Only []string
 	// ReassessAfter re-includes findings whose current VEX status is
@@ -217,7 +226,9 @@ type Outcome struct {
 	// fixed) and was kept although Regenerate was requested.
 	Settled int
 	// Reassessed counts findings included because their statement expired.
-	Reassessed  int
+	Reassessed int
+	// Usage aggregates provider cost over the run (cache hits included).
+	Usage       llm.Usage
 	Document    []byte
 	Filename    string
 	Path        string
@@ -235,6 +246,9 @@ type AssessmentRecord struct {
 	Confidence float64
 	Provider   string
 	Reasoning  string
+	// Cached marks verdicts served from the assessment cache.
+	Cached bool      `json:"cached,omitempty"`
+	Usage  llm.Usage `json:"usage,omitempty"`
 }
 
 // Run executes the pipeline for one SBOM.
@@ -296,7 +310,13 @@ func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 	}
 
 	// Assess.
+	commit := ""
+	if repoDir != "" {
+		commit = repo.HeadCommit(repoDir)
+	}
+	readCache := p.Cache.Enabled() && !opts.NoCache && !opts.Regenerate && !opts.Force
 	var entries []vexgen.Entry
+	records := map[string]*AssessmentRecord{}
 	for i, f := range findings {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -306,13 +326,30 @@ func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 		if repoDir != "" {
 			req.ProductRepo = how
 		}
-		a, err := p.Provider.Assess(ctx, req)
-		if err != nil {
-			log.Error("assessment failed; marking under_investigation", "vuln", f.VulnID, "purl", f.PURL, "err", err)
-			a = llm.Assessment{Status: vex.StatusUnderInvestigation, Reasoning: "assessment error: " + err.Error(), Provider: p.Provider.Name()}
+		key := assesscache.KeyFor(p.Provider.Name(), commit, how, rep)
+		var (
+			a      llm.Assessment
+			cached bool
+		)
+		if readCache {
+			a, cached = p.Cache.Get(key)
 		}
-		log.Info("assessed", "n", fmt.Sprintf("%d/%d", i+1, len(findings)), "vuln", f.VulnID, "purl", f.PURL, "status", a.Status, "confidence", a.Confidence, "provider", a.Provider)
+		if cached {
+			a.Usage = llm.Usage{CacheHits: 1}
+		} else {
+			var err error
+			a, err = p.Provider.Assess(ctx, req)
+			if err != nil {
+				log.Error("assessment failed; marking under_investigation", "vuln", f.VulnID, "purl", f.PURL, "err", err)
+				a = llm.Assessment{Status: vex.StatusUnderInvestigation, Reasoning: "assessment error: " + err.Error(), Provider: p.Provider.Name()}
+			} else if err := p.Cache.Put(key, a, productName(res.Product)); err != nil {
+				log.Warn("assessment cache write failed", "err", err)
+			}
+		}
+		out.Usage.Add(a.Usage)
+		log.Info("assessed", "n", fmt.Sprintf("%d/%d", i+1, len(findings)), "vuln", f.VulnID, "purl", f.PURL, "status", a.Status, "confidence", a.Confidence, "provider", a.Provider, "cached", cached, "usage", a.Usage.String())
 		entries = append(entries, vexgen.Entry{Report: rep, Assessment: a})
+		records[statementKey(f.VulnID, f.PURL)] = &AssessmentRecord{Confidence: a.Confidence, Provider: a.Provider, Cached: cached, Usage: a.Usage}
 	}
 
 	// Build.
@@ -322,7 +359,14 @@ func (p *Pipeline) Run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 	}
 	out.Counts, out.Guardrails = built.Counts, built.Guardrails
 	for _, s := range built.Document.Statements {
-		out.Assessments = append(out.Assessments, AssessmentRecord{VulnID: string(s.Vulnerability.Name), PURL: s.Products[0].ID, Status: s.Status, Reasoning: s.StatusNotes})
+		rec := AssessmentRecord{VulnID: string(s.Vulnerability.Name), PURL: s.Products[0].ID, Status: s.Status, Reasoning: s.StatusNotes}
+		if r := records[statementKey(rec.VulnID, rec.PURL)]; r != nil {
+			rec.Confidence, rec.Provider, rec.Cached, rec.Usage = r.Confidence, r.Provider, r.Cached, r.Usage
+		}
+		out.Assessments = append(out.Assessments, rec)
+	}
+	if !out.Usage.IsZero() {
+		log.Info("provider usage", "sbom", res.Product.SBOMID, "usage", out.Usage.String())
 	}
 	for _, g := range built.Guardrails {
 		log.Warn("guardrail applied", "vuln", g.VulnID, "purl", g.PURL, "reason", g.Reason)

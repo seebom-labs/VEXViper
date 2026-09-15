@@ -47,6 +47,7 @@ llm:
 repo:
   clone: false
   govulncheck: false
+  cache_dir: ` + filepath.Join(outDir, "cache") + `
 vex:
   out_dir: ` + outDir + `
   author: Test Author
@@ -104,7 +105,7 @@ func TestGenerateCommand(t *testing.T) {
 	stderr.Reset()
 	code = run([]string{"generate", "--config", cfg, "--sbom", sbomID, "--out", "-", "--regenerate", "--log-level", "error"}, &stdout, &stderr)
 	if code != 0 || !strings.Contains(stderr.String(), "findings assessed: 1 (skipped: 1, re-assessed: 0)") ||
-		!strings.Contains(stderr.String(), "settled verdicts kept: 1") {
+		!strings.Contains(stderr.String(), "settled verdicts kept: 1") || !strings.Contains(stderr.String(), "provider usage:") {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 

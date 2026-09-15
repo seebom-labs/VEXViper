@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -119,6 +120,15 @@ func TestClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		t.Fatalf("go.mod missing in clone: %v", err)
 	}
+	// HEAD resolves to the tagged commit (detached HEAD after --branch <tag>,
+	// or via refs/heads / packed-refs).
+	want, _ := exec.Command("git", "-C", src, "rev-parse", "v1.0.0").Output()
+	if got := HeadCommit(dir); got != strings.TrimSpace(string(want)) || len(got) != 40 {
+		t.Fatalf("HeadCommit = %q, want %q", got, want)
+	}
+	if HeadCommit(t.TempDir()) != "" {
+		t.Fatal("HeadCommit on a non-repo must be empty")
+	}
 	// second call reuses cache
 	dir2, err := c.Clone(ctx, loc)
 	if err != nil || dir2 != dir {
@@ -137,5 +147,26 @@ func TestClone(t *testing.T) {
 	}
 	if _, err := c.Clone(ctx, Location{URL: "file:///nonexistent/repo"}); err == nil {
 		t.Fatal("nonexistent origin should fail")
+	}
+}
+
+func TestHeadCommitPackedRefs(t *testing.T) {
+	dir := t.TempDir()
+	git := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(git, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(git, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+	os.WriteFile(filepath.Join(git, "packed-refs"), []byte("# pack-refs with: peeled\nabc123 refs/heads/main\n^def\n"), 0o644)
+	if got := HeadCommit(dir); got != "abc123" {
+		t.Fatalf("packed-refs HeadCommit = %q", got)
+	}
+	os.WriteFile(filepath.Join(git, "HEAD"), []byte("ref: refs/heads/missing\n"), 0o644)
+	if got := HeadCommit(dir); got != "" {
+		t.Fatalf("unknown ref must be empty, got %q", got)
+	}
+	os.WriteFile(filepath.Join(git, "HEAD"), []byte("0123456789abcdef\n"), 0o644)
+	if got := HeadCommit(dir); got != "0123456789abcdef" {
+		t.Fatalf("detached HeadCommit = %q", got)
 	}
 }

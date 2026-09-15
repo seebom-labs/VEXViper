@@ -60,6 +60,11 @@ type chatResponse struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+	Model string `json:"model"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 // Assess implements Provider.
@@ -84,12 +89,14 @@ func (o *OpenAI) Assess(ctx context.Context, req Request) (Assessment, error) {
 	} else {
 		format = map[string]any{"type": "json_object"}
 	}
-	text, err := o.complete(ctx, messages, format)
+	start := time.Now()
+	var usage Usage
+	text, err := o.complete(ctx, messages, format, &usage)
 	if err != nil && o.StructuredOutput && isUnsupportedFormat(err) {
-		text, err = o.complete(ctx, messages, map[string]any{"type": "json_object"})
+		text, err = o.complete(ctx, messages, map[string]any{"type": "json_object"}, &usage)
 	}
 	if err != nil && isUnsupportedFormat(err) {
-		text, err = o.complete(ctx, messages, nil)
+		text, err = o.complete(ctx, messages, nil, &usage)
 	}
 	if err != nil {
 		return Assessment{}, err
@@ -99,10 +106,14 @@ func (o *OpenAI) Assess(ctx context.Context, req Request) (Assessment, error) {
 		return Assessment{}, fmt.Errorf("openai: %w", err)
 	}
 	a.Provider = o.Name()
+	usage.Duration = time.Since(start)
+	a.Usage = usage
 	return a, nil
 }
 
-func (o *OpenAI) complete(ctx context.Context, messages []chatMessage, format any) (string, error) {
+// complete performs one chat completion and accumulates token usage into
+// usage (every attempt counts, including format fallbacks that failed).
+func (o *OpenAI) complete(ctx context.Context, messages []chatMessage, format any, usage *Usage) (string, error) {
 	body, _ := json.Marshal(chatRequest{Model: o.Model, Messages: messages, Temperature: o.Temperature, ResponseFormat: format})
 	url := strings.TrimRight(o.BaseURL, "/") + "/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -128,6 +139,7 @@ func (o *OpenAI) complete(ctx context.Context, messages []chatMessage, format an
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	var cr chatResponse
 	_ = json.Unmarshal(data, &cr)
+	usage.Add(Usage{Calls: 1, PromptTokens: cr.Usage.PromptTokens, CompletionTokens: cr.Usage.CompletionTokens, Model: cr.Model})
 	if resp.StatusCode != http.StatusOK {
 		msg := strings.TrimSpace(string(data))
 		if cr.Error != nil {

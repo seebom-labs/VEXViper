@@ -112,6 +112,36 @@ BOMHort refreshes OSV data but has no notion of "re-triage"; VEXViper owns that:
 * a new statement for the same `(vuln_id, purl)` supersedes the old one in BOMHort (latest
   `vex_timestamp` wins), so re-runs are idempotent.
 
+### Scaling to thousands of SBOMs: the assessment cache
+
+The number of SBOMs is not the cost driver — the number of distinct
+*(product commit, vulnerability, package)* questions is, and that is orders of magnitude
+smaller (the same build ships to many clusters; consecutive versions share most findings).
+VEXViper therefore caches every provider verdict in `cache.dir`
+(default `<repo.cache_dir>/assessments`, one JSON file per entry) keyed by
+
+`provider+model · product commit (or repo@ref) · vuln_id · purl · evidence fingerprint · prompt version`
+
+The evidence fingerprint covers the evidence *kinds* and strength (e.g. `govulncheck_not_reachable`),
+package/fixed versions and the OSV record's `modified` timestamp — so a govulncheck DB update or
+a new commit invalidates the entry automatically, while a re-clone to another path does not.
+Cache hits cost nothing and are marked `cached=true` in logs, `Cached` in the MCP output and
+counted in the usage summary. `--regenerate`, `--force` and `--no-cache` bypass cache *reads*
+(fresh verdicts are still written). `cache.ttl` (default: never) forces periodic re-asking;
+`cache.enabled: false` turns it off. Mount `repo.cache_dir` on a PVC so the cache survives
+CronJob runs.
+
+### Cost tracking (TokenOps)
+
+Every assessment carries a `Usage` record: provider calls, prompt/completion tokens
+(OpenAI-compatible and GitHub Models), **premium requests** and output tokens (Copilot CLI,
+its billing unit — e.g. `claude-haiku-4.5` costs 0.33 per call), the answering model, wall
+time and cache hits. It is logged per finding and per SBOM (`msg="provider usage"`), printed
+in the CLI summary (`provider usage: 9 calls, 8.1k output tokens, 2.97 premium requests,
+model=claude-haiku-4.5`), returned by the `generate_vex` MCP tool and accumulated in the
+watch state file (`usage` = lifetime total, `last_pass_usage` = most recent pass), so the cost
+of automated triage is visible without any external metering.
+
 Docker: `docker build -t vexviper . && docker run --rm -v $PWD/work:/work -e VEXVIPER_BOMHORT_URL=http://host:8080 vexviper generate --sbom …`
 (the image ships git + Go toolchain + govulncheck).
 
@@ -134,6 +164,7 @@ every key overridable by `VEXVIPER_<SECTION>_<KEY>` and secrets via `*_env` indi
 | `repo.sboms[]{match,repo}` | — | | per-SBOM repository pins (glob match, `{version}` placeholder) |
 | `vex.{author,author_role,supplier,namespace,out_dir,upload,regenerate}` | `VEXVIPER_VEX_*` | `VEXViper`, `automated triage (LLM-assisted)` | document metadata & output |
 | `watch.{interval,state_file,reassess_after}` | `VEXVIPER_WATCH_*` | `15m`, TTL off | poller & periodic re-assessment |
+| `cache.{enabled,dir,ttl}` | `VEXVIPER_CACHE_*` | on, `<repo.cache_dir>/assessments`, never | assessment cache shared across SBOMs |
 | `timeout` | `VEXVIPER_TIMEOUT` | `30m` | per SBOM |
 
 ### Where does the product repository come from?
@@ -275,7 +306,8 @@ internal/sbom/         minimal SPDX/CycloneDX reader — only for repository hin
 internal/repo/         PURL/VCS → repository resolution, shallow git clone cache
 internal/evidence/     version compare, dependency depth, govulncheck (multi-module), symbol grep
 internal/osv/          OSV vuln detail client (context for the LLM)
-internal/llm/          Provider interface, prompt, heuristic | openai | mcptool | mock
+internal/llm/          Provider interface, prompt, usage accounting, heuristic | openai/github | copilot | mcptool | mock
+internal/assesscache/  verdict cache keyed by provider · commit · finding · evidence fingerprint
 internal/vexgen/       assessments → go-vex document, guardrails, validation
 internal/pipeline/     orchestration, watch loop
 internal/mcpserver/    VEXViper's own MCP server

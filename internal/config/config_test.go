@@ -187,3 +187,19 @@ func TestGitHubProviderEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCacheConfig(t *testing.T) {
+	cfg := Default()
+	if !cfg.Cache.Enabled || cfg.CacheDir() != filepath.Join(".vexviper-cache", "assessments") {
+		t.Fatalf("default cache = %+v dir=%q", cfg.Cache, cfg.CacheDir())
+	}
+	env := map[string]string{"VEXVIPER_CACHE_ENABLED": "false", "VEXVIPER_CACHE_DIR": "/var/cache/vv", "VEXVIPER_CACHE_TTL": "720h"}
+	cfg.ApplyEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if cfg.Cache.Enabled || cfg.CacheDir() != "/var/cache/vv" || cfg.Cache.TTL != 720*time.Hour {
+		t.Fatalf("cache env = %+v", cfg.Cache)
+	}
+	cfg.Cache.TTL = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "cache.ttl") {
+		t.Fatalf("negative ttl must fail validation: %v", err)
+	}
+}

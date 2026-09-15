@@ -289,3 +289,32 @@ func looksLikeCommit(ref string) bool {
 	}
 	return true
 }
+
+// HeadCommit returns the full commit hash checked out in dir, or "" when dir
+// is not a git checkout. It reads .git directly so it works without a git
+// binary and on shallow clones.
+func HeadCommit(dir string) string {
+	gitDir := filepath.Join(dir, ".git")
+	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(string(head))
+	if !strings.HasPrefix(ref, "ref: ") {
+		return ref
+	}
+	ref = strings.TrimPrefix(ref, "ref: ")
+	if b, err := os.ReadFile(filepath.Join(gitDir, filepath.FromSlash(ref))); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	packed, err := os.ReadFile(filepath.Join(gitDir, "packed-refs"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(packed), "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[1] == ref {
+			return f[0]
+		}
+	}
+	return ""
+}

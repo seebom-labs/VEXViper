@@ -14,6 +14,7 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 
+	"github.com/mfahlandt/vexviper/internal/assesscache"
 	"github.com/mfahlandt/vexviper/internal/bomhort"
 	"github.com/mfahlandt/vexviper/internal/config"
 	"github.com/mfahlandt/vexviper/internal/evidence"
@@ -586,5 +587,98 @@ func TestWait(t *testing.T) {
 	err = p.Wait(ctx, "missing", time.Minute, func(context.Context) ([]bomhort.VEXStatement, error) { return nil, nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestRunUsesAssessmentCache: the second SBOM of the same product (same
+// repo commit, same evidence) must not call the provider again; --regenerate,
+// --force and --no-cache bypass cache reads; usage is aggregated.
+func TestRunUsesAssessmentCache(t *testing.T) {
+	bh := bomhortFixture(t)
+	mock := &llm.Mock{Default: &llm.Assessment{Status: vex.StatusAffected, ActionStatement: "upgrade", Confidence: 0.8, Reasoning: "r",
+		Usage: llm.Usage{Calls: 1, PromptTokens: 1000, CompletionTokens: 50, Model: "m"}}}
+	// A checkout with a detached HEAD so the cache key carries a commit.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".git"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("deadbeef\n"), 0o644)
+	cl := &fakeCloner{dir: dir}
+	p := newTestPipeline(t, bh, mock, cl)
+	p.Cache = assesscache.New(filepath.Join(t.TempDir(), "assessments"), 0)
+
+	out, err := p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.Calls) != 2 || out.Usage.Calls != 2 || out.Usage.PromptTokens != 2000 || out.Usage.CacheHits != 0 || out.Usage.Model != "m" {
+		t.Fatalf("first run: calls=%d usage=%+v", len(mock.Calls), out.Usage)
+	}
+	for _, a := range out.Assessments {
+		if a.Cached || a.Usage.Calls != 1 || a.Provider != "mock" {
+			t.Fatalf("first run record = %+v", a)
+		}
+	}
+	st, _ := p.Cache.Stats()
+	if st.Entries != 2 {
+		t.Fatalf("cache entries = %d", st.Entries)
+	}
+
+	// Same product again (e.g. the same SBOM in another cluster): all hits.
+	mock.Calls = nil
+	out, err = p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.Calls) != 0 || out.Usage.Calls != 0 || out.Usage.CacheHits != 2 || out.Usage.TotalTokens() != 0 {
+		t.Fatalf("second run: calls=%d usage=%+v", len(mock.Calls), out.Usage)
+	}
+	for _, a := range out.Assessments {
+		if !a.Cached || a.Status != vex.StatusAffected || a.Provider != "mock" {
+			t.Fatalf("cached record = %+v", a)
+		}
+	}
+
+	// Bypasses.
+	for name, opts := range map[string]RunOptions{
+		"no-cache":   {SBOMRef: "sbom-1", NoCache: true},
+		"regenerate": {SBOMRef: "sbom-1", Regenerate: true},
+		"force":      {SBOMRef: "sbom-1", Force: true},
+	} {
+		mock.Calls = nil
+		out, err = p.Run(context.Background(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(mock.Calls) == 0 || out.Usage.CacheHits != 0 {
+			t.Fatalf("%s must bypass cache reads: calls=%d usage=%+v", name, len(mock.Calls), out.Usage)
+		}
+	}
+
+	// A different provider verdict is not served for the old key once the
+	// commit changes.
+	os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("cafebabe\n"), 0o644)
+	mock.Calls = nil
+	if _, err = p.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.Calls) != 2 {
+		t.Fatalf("new commit must miss the cache, calls=%d", len(mock.Calls))
+	}
+
+	// Provider errors are not cached.
+	failing := &llm.Mock{Err: errors.New("boom")}
+	p2 := newTestPipeline(t, bh, failing, cl)
+	p2.Cache = assesscache.New(filepath.Join(t.TempDir(), "assessments"), 0)
+	if _, err := p2.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := p2.Cache.Stats(); st.Entries != 0 {
+		t.Fatalf("errors must not be cached, entries=%d", st.Entries)
+	}
+
+	// Disabled cache (nil) is a no-op.
+	p3 := newTestPipeline(t, bh, mock, cl)
+	mock.Calls = nil
+	if out, err := p3.Run(context.Background(), RunOptions{SBOMRef: "sbom-1"}); err != nil || out.Usage.CacheHits != 0 || len(mock.Calls) != 2 {
+		t.Fatalf("nil cache: %v calls=%d", err, len(mock.Calls))
 	}
 }

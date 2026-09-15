@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
 
@@ -38,6 +39,90 @@ type Assessment struct {
 	EvidenceRefs []string `json:"evidence_refs,omitempty"`
 	// Provider names the provider that produced the assessment.
 	Provider string `json:"provider,omitempty"`
+	// Usage reports what the assessment cost (zero for offline providers).
+	Usage Usage `json:"usage,omitempty"`
+}
+
+// Usage is the cost of one or more provider calls. Fields are additive so
+// callers can aggregate per SBOM/run. Not every provider fills every field:
+// OpenAI-compatible APIs report tokens; the Copilot CLI reports premium
+// requests (its billing unit) and output tokens only.
+type Usage struct {
+	// Calls counts provider invocations (0 for cache hits / offline verdicts).
+	Calls int `json:"calls,omitempty"`
+	// PromptTokens and CompletionTokens as reported by the API.
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	// PremiumRequests is the GitHub Copilot billing unit consumed.
+	PremiumRequests float64 `json:"premium_requests,omitempty"`
+	// Model is the model that actually answered, when the provider reports it.
+	Model string `json:"model,omitempty"`
+	// Duration is wall time spent waiting on the provider.
+	Duration time.Duration `json:"duration_ns,omitempty"`
+	// CacheHits counts assessments served from the assessment cache.
+	CacheHits int `json:"cache_hits,omitempty"`
+}
+
+// Add accumulates o into u. Model is kept when all contributions agree and
+// becomes "mixed" otherwise.
+func (u *Usage) Add(o Usage) {
+	u.Calls += o.Calls
+	u.PromptTokens += o.PromptTokens
+	u.CompletionTokens += o.CompletionTokens
+	u.PremiumRequests += o.PremiumRequests
+	u.Duration += o.Duration
+	u.CacheHits += o.CacheHits
+	switch {
+	case o.Model == "":
+	case u.Model == "":
+		u.Model = o.Model
+	case u.Model != o.Model:
+		u.Model = "mixed"
+	}
+}
+
+// TotalTokens is prompt + completion tokens.
+func (u Usage) TotalTokens() int { return u.PromptTokens + u.CompletionTokens }
+
+// IsZero reports whether nothing was consumed or cached.
+func (u Usage) IsZero() bool {
+	return u.Calls == 0 && u.PromptTokens == 0 && u.CompletionTokens == 0 && u.PremiumRequests == 0 && u.CacheHits == 0
+}
+
+// String renders a compact human-readable summary, e.g.
+// "3 calls, 12.4k tokens (11.9k prompt / 512 completion), 1.0 premium requests, 2 cache hits".
+func (u Usage) String() string {
+	var parts []string
+	if u.Calls > 0 {
+		parts = append(parts, fmt.Sprintf("%d calls", u.Calls))
+	}
+	switch {
+	case u.PromptTokens > 0:
+		parts = append(parts, fmt.Sprintf("%s tokens (%s prompt / %s completion)", kilo(u.TotalTokens()), kilo(u.PromptTokens), kilo(u.CompletionTokens)))
+	case u.CompletionTokens > 0:
+		// Copilot CLI only reports output tokens.
+		parts = append(parts, fmt.Sprintf("%s output tokens", kilo(u.CompletionTokens)))
+	}
+	if u.PremiumRequests > 0 {
+		parts = append(parts, fmt.Sprintf("%.2f premium requests", u.PremiumRequests))
+	}
+	if u.CacheHits > 0 {
+		parts = append(parts, fmt.Sprintf("%d cache hits", u.CacheHits))
+	}
+	if u.Model != "" {
+		parts = append(parts, "model="+u.Model)
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func kilo(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 // Provider assesses one finding.

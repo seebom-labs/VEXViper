@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mfahlandt/vexviper/internal/bomhort"
+	"github.com/mfahlandt/vexviper/internal/llm"
 )
 
 // SBOMLister lists SBOMs (bomhort.Client.AllSBOMs).
@@ -26,6 +27,11 @@ type WatchState struct {
 	// ProcessedAt maps sbom_id → time of the last successful run.
 	ProcessedAt map[string]time.Time `json:"processed_at,omitempty"`
 	LastRun     time.Time            `json:"last_run"`
+	// Usage accumulates provider cost over the lifetime of the state file
+	// (TokenOps: what did automated triage cost so far).
+	Usage llm.Usage `json:"usage,omitempty"`
+	// LastPassUsage is the cost of the most recent pass.
+	LastPassUsage llm.Usage `json:"last_pass_usage,omitempty"`
 }
 
 // LoadWatchState reads the state file; a missing file yields an empty state.
@@ -115,7 +121,7 @@ func (p *Pipeline) Watch(ctx context.Context, lister SBOMLister, opts WatchOptio
 			}
 			log.Error("watch pass failed", "err", err)
 		} else {
-			log.Info("watch pass complete", "processed", n)
+			log.Info("watch pass complete", "processed", n, "usage", state.LastPassUsage.String(), "usage_total", state.Usage.String())
 		}
 		state.LastRun = time.Now().UTC()
 		if err := state.Save(opts.StateFile); err != nil {
@@ -143,6 +149,7 @@ func (p *Pipeline) watchPass(ctx context.Context, lister SBOMLister, state *Watc
 	}
 	var processed int
 	var errs []error
+	state.LastPassUsage = llm.Usage{}
 	for _, s := range sboms {
 		fp := fingerprint(s)
 		due := opts.ReassessAfter > 0 && time.Since(state.ProcessedAt[s.ID]) >= opts.ReassessAfter
@@ -166,7 +173,9 @@ func (p *Pipeline) watchPass(ctx context.Context, lister SBOMLister, state *Watc
 		processed++
 		state.Processed[s.ID] = fp
 		state.ProcessedAt[s.ID] = time.Now().UTC()
-		log.Info("sbom processed", "sbom", s.ID, "findings", out.Findings, "reassessed", out.Reassessed, "skipped", out.Skipped, "counts", out.Counts)
+		state.Usage.Add(out.Usage)
+		state.LastPassUsage.Add(out.Usage)
+		log.Info("sbom processed", "sbom", s.ID, "findings", out.Findings, "reassessed", out.Reassessed, "skipped", out.Skipped, "counts", out.Counts, "usage", out.Usage.String())
 	}
 	return processed, errors.Join(errs...)
 }

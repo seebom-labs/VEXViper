@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -49,8 +50,29 @@ type Config struct {
 	Repo    Repo    `yaml:"repo"`
 	VEX     VEX     `yaml:"vex"`
 	Watch   Watch   `yaml:"watch"`
+	Cache   Cache   `yaml:"cache"`
 	// Timeout for the whole generation of a single SBOM.
 	Timeout time.Duration `yaml:"timeout"`
+}
+
+// Cache configures the assessment cache that lets identical questions
+// (same provider, product commit, finding and evidence) reuse a verdict
+// across SBOMs instead of paying for another provider call.
+type Cache struct {
+	// Enabled toggles the cache (default true).
+	Enabled bool `yaml:"enabled"`
+	// Dir holds the cache files (default "<repo.cache_dir>/assessments").
+	Dir string `yaml:"dir"`
+	// TTL expires entries; 0 keeps them until commit or evidence changes.
+	TTL time.Duration `yaml:"ttl"`
+}
+
+// CacheDir returns the effective cache directory.
+func (c Config) CacheDir() string {
+	if c.Cache.Dir != "" {
+		return c.Cache.Dir
+	}
+	return filepath.Join(c.Repo.CacheDir, "assessments")
 }
 
 // BOMHort holds connection settings for the BOMHort REST API.
@@ -217,6 +239,7 @@ func Default() Config {
 			MCP:     MCP{Transport: MCPTransportStdio, Tool: "assess_vulnerability", Timeout: 120 * time.Second},
 		},
 		Repo:    Repo{CacheDir: ".vexviper-cache", Clone: true, Govulncheck: true},
+		Cache:   Cache{Enabled: true},
 		VEX:     VEX{Author: "VEXViper", AuthorRole: "automated triage (LLM-assisted)", Namespace: "https://vexviper.dev/docs", OutDir: "."},
 		Watch:   Watch{Interval: 15 * time.Minute, StateFile: ".vexviper-cache/watch-state.json"},
 		Timeout: 30 * time.Minute,
@@ -296,6 +319,9 @@ func (c *Config) ApplyEnv(lookup func(string) (string, bool)) {
 	str("MCP_TOOL", &c.LLM.MCP.Tool)
 	dur("MCP_TIMEOUT", &c.LLM.MCP.Timeout)
 	str("REPO_CACHE_DIR", &c.Repo.CacheDir)
+	boolean("CACHE_ENABLED", &c.Cache.Enabled)
+	str("CACHE_DIR", &c.Cache.Dir)
+	dur("CACHE_TTL", &c.Cache.TTL)
 	str("REPO_OVERRIDE", &c.Repo.Override)
 	boolean("REPO_CLONE", &c.Repo.Clone)
 	boolean("REPO_GOVULNCHECK", &c.Repo.Govulncheck)
@@ -339,6 +365,9 @@ func (c *Config) Validate() error {
 	}
 	if c.LLM.MinConfidence < 0 || c.LLM.MinConfidence > 1 {
 		errs = append(errs, fmt.Errorf("llm.min_confidence %v must be within [0,1]", c.LLM.MinConfidence))
+	}
+	if c.Cache.TTL < 0 {
+		errs = append(errs, fmt.Errorf("cache.ttl must not be negative"))
 	}
 	for i, e := range c.Repo.SBOMs {
 		if e.Match == "" || e.Repo == "" {

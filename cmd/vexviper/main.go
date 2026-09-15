@@ -146,6 +146,7 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	upload := fs.Bool("upload", false, "upload the document to BOMHort (needs api key)")
 	regenerate := fs.Bool("regenerate", false, "also re-assess findings that already carry a vex_status, except settled ones (not_affected, fixed)")
 	force := fs.Bool("force", false, "hard regenerate: re-assess every finding, including not_affected/fixed (implies --regenerate)")
+	noCache := fs.Bool("no-cache", false, "do not reuse cached assessments (results are still written to the cache)")
 	only := fs.String("only", "", "comma-separated vuln IDs to restrict to")
 	wait := fs.Duration("wait", 0, "after --upload, wait up to this long for BOMHort to ingest the document")
 	reassess := fs.Duration("reassess-after", -1, "re-assess under_investigation/affected findings whose statement is older than this (default from config watch.reassess_after; 0 disables)")
@@ -179,6 +180,7 @@ func cmdGenerate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 		Upload:        *upload || cfg.VEX.Upload,
 		Regenerate:    *regenerate || *force || cfg.VEX.Regenerate,
 		Force:         *force,
+		NoCache:       *noCache,
 	}
 	if *only != "" {
 		opts.Only = strings.Split(*only, ",")
@@ -221,6 +223,7 @@ func printSummary(w io.Writer, res *pipeline.Outcome) {
 	if res.Settled > 0 {
 		fmt.Fprintf(w, "  settled verdicts kept: %d (not_affected/fixed; use --force to re-assess)\n", res.Settled)
 	}
+	fmt.Fprintf(w, "  provider usage:    %s\n", res.Usage.String())
 	if res.RepoHow != "" {
 		fmt.Fprintf(w, "  product repo:      %s", res.RepoHow)
 		if res.RepoDir != "" {

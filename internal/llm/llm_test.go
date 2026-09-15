@@ -159,7 +159,7 @@ func TestOpenAI(t *testing.T) {
 			_, _ = io.WriteString(w, `{"error":{"message":"response_format json_schema is not supported"}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"{\"status\":\"not_affected\",\"justification\":\"vulnerable_code_not_in_execute_path\",\"confidence\":0.8,\"reasoning\":\"no path\",\"evidence_refs\":[\"govulncheck_not_reachable\"]}"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, `{"model":"test-model-2026","usage":{"prompt_tokens":1200,"completion_tokens":80},"choices":[{"message":{"content":"{\"status\":\"not_affected\",\"justification\":\"vulnerable_code_not_in_execute_path\",\"confidence\":0.8,\"reasoning\":\"no path\",\"evidence_refs\":[\"govulncheck_not_reachable\"]}"},"finish_reason":"stop"}]}`)
 	}))
 	defer srv.Close()
 
@@ -173,6 +173,10 @@ func TestOpenAI(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("expected fallback from json_schema to json_object (2 calls), got %d", calls.Load())
+	}
+	// Both attempts count; tokens come from the successful response only.
+	if a.Usage.Calls != 2 || a.Usage.PromptTokens != 1200 || a.Usage.CompletionTokens != 80 || a.Usage.Model != "test-model-2026" || a.Usage.Duration <= 0 {
+		t.Fatalf("usage = %+v", a.Usage)
 	}
 	msgs := lastBody["messages"].([]any)
 	if len(msgs) != 2 || msgs[0].(map[string]any)["role"] != "system" {
@@ -378,6 +382,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -p) prompt="$2"; shift;;
     --model) model="$2"; shift;;
+    --output-format) fmt="$2"; shift;;
     -s|--no-ask-user|--no-auto-update|--no-custom-instructions|--deny-tool=shell|--deny-tool=write|--deny-tool=edit) ;;
     --extra) extra=1;;
     *) echo "unexpected arg $1" >&2; exit 2;;
@@ -388,11 +393,24 @@ case "$prompt" in *"OpenVEX"*) ;; *) echo "system prompt missing" >&2; exit 2;; 
 case "$prompt" in *"GO-2023-2102"*) ;; *) echo "finding missing" >&2; exit 2;; esac
 if [ "$model" = "fail" ]; then echo "To authenticate, run /login" >&2; exit 1; fi
 [ "$extra" = 1 ] || { echo "extra arg missing" >&2; exit 2; }
-pwd
-echo 'Here you go:'
-printf '%s\n' '`+"```"+`json'
-echo '{"status":"affected","confidence":0.7,"reasoning":"reachable","action_statement":"upgrade"}'
-printf '%s\n' '`+"```"+`'
+[ "$fmt" = json ] || { echo "json output format missing" >&2; exit 2; }
+if [ "$model" = "legacy" ]; then
+  # Older CLI: plain text with a fenced answer.
+  echo 'Here you go:'
+  printf '%s\n' '`+"```"+`json'
+  echo '{"status":"affected","confidence":0.7,"reasoning":"reachable","action_statement":"upgrade"}'
+  printf '%s\n' '`+"```"+`'
+  exit 0
+fi
+# JSONL events as emitted by copilot --output-format json.
+echo '{"type":"session.tools_updated","data":{"model":"claude-sonnet-4.5"}}'
+echo '{"type":"assistant.reasoning","data":{"content":"thinking","outputTokens":40}}'
+echo '{"type":"assistant.message","data":{"content":"","toolRequests":[{"name":"view"}],"outputTokens":10}}'
+cwd=$(pwd)
+cat <<EOF
+{"type":"assistant.message","data":{"content":"Result:\\n\\u0060\\u0060\\u0060json\\n{\\"status\\":\\"affected\\",\\"confidence\\":0.7,\\"reasoning\\":\\"cwd=$cwd\\",\\"action_statement\\":\\"upgrade\\"}\\n\\u0060\\u0060\\u0060","outputTokens":62}}
+EOF
+echo '{"type":"result","exitCode":0,"usage":{"premiumRequests":0.33,"totalApiDurationMs":1500}}'
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -405,6 +423,22 @@ printf '%s\n' '`+"```"+`'
 	if a.Status != vex.StatusAffected || a.Provider != "copilot:gpt-5" || a.ActionStatement != "upgrade" {
 		t.Fatalf("assessment = %+v", a)
 	}
+	if !strings.Contains(a.Reasoning, repoDir) {
+		t.Fatalf("InRepo: cwd not the repo: %q", a.Reasoning)
+	}
+	if a.Usage.Calls != 1 || a.Usage.PremiumRequests != 0.33 || a.Usage.CompletionTokens != 112 || a.Usage.Model != "claude-sonnet-4.5" || a.Usage.Duration <= 0 {
+		t.Fatalf("usage = %+v", a.Usage)
+	}
+
+	// Older CLI without JSONL output still works; the model falls back to the configured one.
+	legacy := &CopilotCLI{Command: script, Model: "legacy", Args: []string{"--extra"}}
+	a, err = legacy.Assess(context.Background(), Request{ProductName: "p", Report: report(item(evidence.KindReachable, true))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Status != vex.StatusAffected || a.Usage.Calls != 1 || a.Usage.Model != "legacy" || a.Usage.PremiumRequests != 0 {
+		t.Fatalf("legacy = %+v usage=%+v", a, a.Usage)
+	}
 
 	bad := &CopilotCLI{Command: script, Model: "fail", Args: []string{"--extra"}}
 	if _, err := bad.Assess(context.Background(), Request{Report: report()}); err == nil || !strings.Contains(err.Error(), "not logged in") {
@@ -415,5 +449,42 @@ printf '%s\n' '`+"```"+`'
 	}
 	if (&CopilotCLI{}).Name() != "copilot" || (&CopilotCLI{}).command() != "copilot" {
 		t.Fatal("defaults")
+	}
+}
+
+func TestUsageAddAndString(t *testing.T) {
+	var u Usage
+	if !u.IsZero() || u.String() != "none" {
+		t.Fatalf("zero usage: %q", u.String())
+	}
+	u.Add(Usage{Calls: 1, PromptTokens: 11900, CompletionTokens: 512, Model: "gpt-4.1"})
+	u.Add(Usage{Calls: 2, PremiumRequests: 1, CacheHits: 2, Model: "gpt-4.1"})
+	if u.Calls != 3 || u.TotalTokens() != 12412 || u.PremiumRequests != 1 || u.CacheHits != 2 || u.Model != "gpt-4.1" {
+		t.Fatalf("u = %+v", u)
+	}
+	s := u.String()
+	for _, want := range []string{"3 calls", "12.4k tokens", "11.9k prompt", "512 completion", "1.00 premium requests", "2 cache hits", "model=gpt-4.1"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("String() = %q, missing %q", s, want)
+		}
+	}
+	u.Add(Usage{Model: "claude"})
+	if u.Model != "mixed" {
+		t.Fatalf("model = %q, want mixed", u.Model)
+	}
+	if got := (Usage{CompletionTokens: 5}).String(); got != "5 output tokens" {
+		t.Fatalf("output-only usage = %q", got)
+	}
+}
+
+func TestParseCopilotOutputNonJSON(t *testing.T) {
+	text, u := parseCopilotOutput([]byte("plain {\"status\":\"fixed\"} answer"))
+	if text != "plain {\"status\":\"fixed\"} answer" || !u.IsZero() {
+		t.Fatalf("text=%q usage=%+v", text, u)
+	}
+	// A JSON line without "type" is not an event stream.
+	text, _ = parseCopilotOutput([]byte("{\"status\":\"fixed\",\"confidence\":1,\"reasoning\":\"x\"}"))
+	if !strings.Contains(text, "fixed") {
+		t.Fatalf("bare JSON must be passed through: %q", text)
 	}
 }

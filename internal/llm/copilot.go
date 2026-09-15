@@ -60,6 +60,7 @@ func (c *CopilotCLI) Assess(ctx context.Context, req Request) (Assessment, error
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	start := time.Now()
 	cmd := exec.CommandContext(ctx, c.command(), c.args(req)...)
 	cmd.Dir = c.Dir
 	if c.InRepo && req.RepoDir != "" {
@@ -86,12 +87,79 @@ func (c *CopilotCLI) Assess(ctx context.Context, req Request) (Assessment, error
 		}
 		return Assessment{}, fmt.Errorf("copilot: %w: %.400s", err, msg)
 	}
-	a, err := ParseAssessment(string(stdout))
+	text, usage := parseCopilotOutput(stdout)
+	a, err := ParseAssessment(text)
 	if err != nil {
 		return Assessment{}, fmt.Errorf("copilot: %w", err)
 	}
 	a.Provider = c.Name()
+	usage.Calls = 1
+	usage.Duration = time.Since(start)
+	if usage.Model == "" {
+		usage.Model = c.Model
+	}
+	a.Usage = usage
 	return a, nil
+}
+
+// copilotEvent is the subset of Copilot CLI `--output-format json` (JSONL)
+// events VEXViper reads: the final assistant message, the model in use and
+// the billing summary in the trailing "result" event.
+type copilotEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		Content      string `json:"content"`
+		Model        string `json:"model"`
+		OutputTokens int    `json:"outputTokens"`
+		ToolRequests []any  `json:"toolRequests"`
+	} `json:"data"`
+	Usage struct {
+		PremiumRequests    float64 `json:"premiumRequests"`
+		TotalAPIDurationMs int64   `json:"totalApiDurationMs"`
+	} `json:"usage"`
+}
+
+// parseCopilotOutput extracts the assistant's final answer and usage from
+// JSONL output. Output that is not JSONL (older CLIs, or a CLI that ignored
+// --output-format) is returned verbatim so ParseAssessment can still try.
+func parseCopilotOutput(out []byte) (string, Usage) {
+	var (
+		u       Usage
+		answer  string
+		isJSONL bool
+	)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var ev copilotEvent
+		if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.Type == "" {
+			continue
+		}
+		isJSONL = true
+		switch ev.Type {
+		case "assistant.message":
+			// Tool-call turns also emit assistant.message; keep the last one
+			// carrying text, which is the answer.
+			if strings.TrimSpace(ev.Data.Content) != "" {
+				answer = ev.Data.Content
+			}
+			u.CompletionTokens += ev.Data.OutputTokens
+		case "assistant.reasoning":
+			u.CompletionTokens += ev.Data.OutputTokens
+		case "session.tools_updated", "session.model_changed":
+			if ev.Data.Model != "" {
+				u.Model = ev.Data.Model
+			}
+		case "result":
+			u.PremiumRequests = ev.Usage.PremiumRequests
+		}
+	}
+	if !isJSONL {
+		return string(out), u
+	}
+	return answer, u
 }
 
 func (c *CopilotCLI) command() string {
@@ -106,7 +174,7 @@ func (c *CopilotCLI) args(req Request) []string {
 	prompt := SystemPrompt + "\n\nJSON schema of the required answer:\n" + string(schema) +
 		"\n\n" + c.toolHint() + " Answer with the JSON object only.\n\n" +
 		BuildUserPrompt(req)
-	args := []string{"-p", prompt, "-s", "--no-ask-user", "--no-auto-update", "--no-custom-instructions",
+	args := []string{"-p", prompt, "-s", "--output-format", "json", "--no-ask-user", "--no-auto-update", "--no-custom-instructions",
 		"--deny-tool=shell", "--deny-tool=write", "--deny-tool=edit"}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
