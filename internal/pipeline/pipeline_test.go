@@ -26,15 +26,16 @@ import (
 )
 
 type fakeBOMHort struct {
-	sbom     bomhort.SBOM
-	vulns    []bomhort.Vulnerability
-	deps     []bomhort.DependencyNode
-	raw      []byte
-	uploads  []string
-	uploaded [][]byte
-	upErr    error
-	stmts    []bomhort.VEXStatement
-	stmtErr  error
+	sbom         bomhort.SBOM
+	vulns        []bomhort.Vulnerability
+	deps         []bomhort.DependencyNode
+	raw          []byte
+	uploads      []string
+	uploaded     [][]byte
+	uploadScopes []string
+	upErr        error
+	stmts        []bomhort.VEXStatement
+	stmtErr      error
 }
 
 func (f *fakeBOMHort) AllVEXStatements(context.Context) ([]bomhort.VEXStatement, error) {
@@ -54,12 +55,13 @@ func (f *fakeBOMHort) Dependencies(context.Context, string) ([]bomhort.Dependenc
 	return f.deps, nil
 }
 func (f *fakeBOMHort) DownloadSBOM(context.Context, string) ([]byte, error) { return f.raw, nil }
-func (f *fakeBOMHort) UploadVEX(_ context.Context, name string, doc []byte) (bomhort.UploadResult, error) {
+func (f *fakeBOMHort) UploadVEX(_ context.Context, name string, doc []byte, sbomID string) (bomhort.UploadResult, error) {
 	if f.upErr != nil {
 		return bomhort.UploadResult{}, f.upErr
 	}
 	f.uploads = append(f.uploads, name)
 	f.uploaded = append(f.uploaded, doc)
+	f.uploadScopes = append(f.uploadScopes, sbomID)
 	return bomhort.UploadResult{Status: "pending", JobID: "job-1", JobType: "vex"}, nil
 }
 
@@ -142,6 +144,9 @@ func TestRunWritesDocumentAndUploads(t *testing.T) {
 	}
 	if len(bh.uploads) != 1 || bh.uploads[0] != out.Filename {
 		t.Fatalf("uploads = %v", bh.uploads)
+	}
+	if bh.uploadScopes[0] != "sbom-1" {
+		t.Fatalf("upload must be scoped to the SBOM (#350), got %q", bh.uploadScopes[0])
 	}
 	if out.Upload == nil || out.Upload.JobID != "job-1" {
 		t.Fatalf("upload result = %+v", out.Upload)
@@ -396,6 +401,25 @@ func TestMaterializeRepoPrecedence(t *testing.T) {
 			t.Fatalf("got %+v", cl.locs[0])
 		}
 	})
+	t.Run("bomhort source_repo beats sbom hints and carries source_ref", func(t *testing.T) {
+		bp := prod
+		bp.SourceRepo, bp.SourceRef = "https://github.com/kubermatic/kubelb", "abc1234"
+		p, cl := mk(config.Repo{})
+		p.MaterializeRepo(context.Background(), bp, "")
+		loc := cl.locs[0]
+		if loc.URL != "https://github.com/kubermatic/kubelb" || loc.Ref != "abc1234" || loc.How != "bomhort" {
+			t.Fatalf("got %+v", loc)
+		}
+	})
+	t.Run("config sboms beats bomhort source_repo", func(t *testing.T) {
+		bp := prod
+		bp.SourceRepo = "https://github.com/wrong/repo"
+		p, cl := mk(config.Repo{SBOMs: []config.SBOMRepo{{Match: "kubelb-*", Repo: "kubermatic/kubelb"}}})
+		p.MaterializeRepo(context.Background(), bp, "")
+		if cl.locs[0].URL != "https://github.com/kubermatic/kubelb" || cl.locs[0].How != "config-sbom" {
+			t.Fatalf("got %+v", cl.locs[0])
+		}
+	})
 }
 
 func TestRunReassessAfter(t *testing.T) {
@@ -458,6 +482,28 @@ func TestRunReassessAfter(t *testing.T) {
 		}
 		if out.Findings != 1 || out.Reassessed != 0 {
 			t.Fatalf("findings=%d reassessed=%d", out.Findings, out.Reassessed)
+		}
+	})
+	t.Run("row vex_timestamp is used without listing statements", func(t *testing.T) {
+		// BOMHort >= #335 puts the effective statement's timestamp on the
+		// vulnerability row; /vex/statements must not be consulted.
+		bh, mock := mk()
+		bh.vulns = []bomhort.Vulnerability{
+			{VulnID: "V-OLD-UI", PURL: "pkg:golang/a/b@v1", VEXStatus: "under_investigation", VEXTimestamp: old},
+			{VulnID: "V-FRESH-UI", PURL: "pkg:golang/a/d@v1", VEXStatus: "under_investigation", VEXTimestamp: fresh},
+			{VulnID: "V-OLD-NA", PURL: "pkg:golang/a/c@v1", VEXStatus: "not_affected", VEXTimestamp: old},
+		}
+		bh.stmts = nil
+		bh.stmtErr = errors.New("must not be called")
+		out, err := newTestPipeline(t, bh, mock, nil).Run(context.Background(), RunOptions{SBOMRef: ".", ReassessAfter: 7 * 24 * time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Findings != 1 || out.Reassessed != 1 || out.Skipped != 2 {
+			t.Fatalf("findings=%d reassessed=%d skipped=%d", out.Findings, out.Reassessed, out.Skipped)
+		}
+		if len(mock.Calls) != 1 || mock.Calls[0].Report.Finding.VulnID != "V-OLD-UI" {
+			t.Fatalf("assessed = %+v", mock.Calls)
 		}
 	})
 }

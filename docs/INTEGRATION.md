@@ -21,11 +21,11 @@ API** (`docs/api-reference` calls this "custom tooling"). Benefits:
 | Call | Purpose | Client method |
 |---|---|---|
 | `GET /health` | readiness | `Healthy` |
-| `GET /api/v1/sboms?page&page_size&search` | enumerate SBOMs (watch mode, `--sbom` lookup by id / `document_name` / `source_file`) | `ListSBOMs`, `AllSBOMs`, `FindSBOM` |
-| `GET /api/v1/sboms/{id}/vulnerabilities` | **the findings**: `vuln_id`, `purl`, `severity`, `summary`, `fixed_version`, `vex_status` | `Vulnerabilities` |
+| `GET /api/v1/sboms?page&page_size&search` | enumerate SBOMs (watch mode, `--sbom` lookup by id / `document_name` / `source_file`); `source_repo`/`source_ref` feed repo resolution (#332) | `ListSBOMs`, `AllSBOMs`, `FindSBOM` |
+| `GET /api/v1/sboms/{id}/vulnerabilities` | **the findings**: `vuln_id`, `purl`, `severity`, `summary`, `fixed_version`, `vex_status` (+ `vex_timestamp`, `vex_justification`, `vex_scope` since #335/#350) | `Vulnerabilities` |
 | `GET /api/v1/sboms/{id}/dependencies` | dependency tree → direct/transitive evidence | `Dependencies` |
 | `GET /api/v1/sboms/{id}/download` | original SBOM → repository hints only (VCS external refs, root PURLs, main Go module) | `DownloadSBOM` |
-| `POST /api/v1/sboms/upload` + `X-Filename: <name>.openvex.json` + `X-API-Key` | ingest the generated document | `UploadVEX` |
+| `POST /api/v1/sboms/upload?sbom_id={id}` + `X-Filename: <name>.openvex.json` + `X-API-Key` | ingest the generated document, scoped to the SBOM it describes (#350) | `UploadVEX` |
 | `GET /api/v1/vex/statements` | verify ingestion (`--wait`) | `VEXStatements` |
 
 Rate limit (100 req / 10 s) is respected by the client's paging and there is no polling
@@ -43,14 +43,19 @@ statement VEXViper emits:
   (BOMHort reads `identifiers.purl` first, then `@id`);
 * never normalises, re-encodes or re-qualifies the PURL.
 
+Since BOMHort #350 a statement is additionally **scoped to one SBOM**: VEXViper always
+uploads with `?sbom_id=<sbom uuid>` so its verdicts (reachability claims about *one*
+product) never suppress the same CVE fleet-wide. Gateways ≤ 0.6.1 ignore the parameter and
+fall back to global statements.
+
 Only OpenVEX is supported by BOMHort, hence only OpenVEX is emitted.
 
-`GET /sboms/{id}/vulnerabilities` LEFT JOINs `vex_statements` without collapsing to the
-newest statement, so after several uploads for the same SBOM the endpoint returns **one row
-per matching statement** (same `vuln_id`/`purl`, possibly differing `vex_status`). VEXViper
-dedupes findings by `(vuln_id, purl)` — any non-empty status counts as "already VEXed" — and
-uses `/api/v1/vex/statements` (`vex_timestamp`) whenever the *newest* verdict matters
-(re-assessment TTL). Worth raising upstream alongside #255 ("latest statement wins").
+Since #335, `GET /sboms/{id}/vulnerabilities` returns exactly **one row per `(vuln_id,
+purl)`** — the statement with the newest `vex_timestamp` wins, and the row carries
+`vex_timestamp`/`vex_justification`/`vex_statement_id`. VEXViper uses the row timestamp
+directly for the re-assessment TTL. Older gateways emitted one row per matching statement;
+VEXViper still dedupes defensively by `(vuln_id, purl)` and falls back to paging
+`/api/v1/vex/statements` when rows carry no `vex_timestamp`.
 
 ### Upload requirements
 
@@ -93,14 +98,15 @@ Secrets: one Secret with `api-key` (BOMHort) and optionally `openai-api-key`.
 
 Filed as tracking epic [BOMHort#338](https://github.com/seebom-labs/BOMHort/issues/338):
 
-| Issue | Feature | Why VEXViper needs it |
+| Issue | Feature | Status |
 |---|---|---|
-| [#332](https://github.com/seebom-labs/BOMHort/issues/332) | `source_repo` / `source_ref` per SBOM | repo resolution without PURL guessing or `repo.sboms` pins |
-| [#333](https://github.com/seebom-labs/BOMHort/issues/333) | `since`/cursor listing, `vex_status=missing` filter | `watch` passes over 15k SBOMs without O(n) re-reads |
-| [#335](https://github.com/seebom-labs/BOMHort/issues/335) | one row per `(vuln_id, purl)`, latest statement wins, `vex_timestamp` | re-triage TTL without paging `/vex/statements` |
-| [#336](https://github.com/seebom-labs/BOMHort/issues/336) | idempotent upload + job status | know whether a pushed document matched anything |
-| [#334](https://github.com/seebom-labs/BOMHort/issues/334) | statement provenance + automated/human badge | make LLM drafts reviewable and auditable |
-| [#337](https://github.com/seebom-labs/BOMHort/issues/337) | outbound webhooks | trigger generation instead of polling |
+| [#332](https://github.com/seebom-labs/BOMHort/issues/332) | `source_repo` / `source_ref` per SBOM | **landed** (BOMHort main) — used by repo resolution, beats SBOM hints |
+| [#333](https://github.com/seebom-labs/BOMHort/issues/333) | `since`/cursor listing, `vex_status=missing` filter | open — `watch` still lists everything each pass |
+| [#335](https://github.com/seebom-labs/BOMHort/issues/335) | one row per `(vuln_id, purl)`, latest statement wins, `vex_timestamp` | **landed** (BOMHort main) — re-triage TTL reads the row timestamp |
+| [#336](https://github.com/seebom-labs/BOMHort/issues/336) | idempotent upload + job status | open — `--wait` still re-reads the vulnerabilities endpoint |
+| [#334](https://github.com/seebom-labs/BOMHort/issues/334) | statement provenance + automated/human badge | **landed** (BOMHort main) — `author`/`role`/`tooling`/`status_notes` surfaced |
+| [#337](https://github.com/seebom-labs/BOMHort/issues/337) | outbound webhooks | open |
+| [#350](https://github.com/seebom-labs/BOMHort/issues/350) | per-SBOM statement scoping (`?sbom_id=` upload, `vex_scope`) | **landed** (BOMHort main) — VEXViper always uploads scoped |
 
 The original proposal text is kept below for context.
 
@@ -135,9 +141,9 @@ scheduler or hook for *re-triage* — an applied statement stays until a newer o
 same `(vuln_id, purl)` is ingested. VEXViper therefore owns the re-run policy
 (`watch.reassess_after`, see README "Re-running over time"): fingerprint changes trigger
 assessment of new findings; a TTL re-opens `under_investigation`/`affected` verdicts using
-`vex_timestamp` from `/api/v1/vex/statements`. Because BOMHort resolves conflicts by newest
-timestamp, re-uploads are idempotent. An upstream `vex_updated_at` on the vulnerabilities
-endpoint would remove the need to page through all statements (proposal 2/3 above).
+the row-level `vex_timestamp` (#335; paging `/api/v1/vex/statements` remains as fallback for
+gateways ≤ 0.6.1). Because BOMHort resolves conflicts by newest timestamp, re-uploads are
+idempotent.
 
 ### Scale: many SBOMs, few distinct questions
 
@@ -147,9 +153,9 @@ by provider, product commit, finding and an evidence fingerprint, so each distin
 is paid for once and reused for every SBOM that shares the build. What limits this today is
 BOMHort's data model, not VEXViper:
 
-* there is no per-SBOM **source repository / commit** field — VEXViper infers it from
-  PURLs and SBOM hints, which is where most misses come from (see proposal 1 in §5 and the
-  upstream issues linked there);
+* per-SBOM **source repository / commit** now exists upstream (`source_repo`/`source_ref`,
+  #332) and VEXViper prefers it; for SBOMs ingested without it, repo resolution still falls
+  back to PURLs and SBOM hints (`repo.sboms` pins remain the escape hatch);
 * `GET /api/v1/sboms` has no `since`/cursor and `/vulnerabilities` no `vex_filter=missing`,
   so `watch` must list everything each pass.
 

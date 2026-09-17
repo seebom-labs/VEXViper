@@ -22,11 +22,12 @@ import (
 )
 
 type fakeBOMHort struct {
-	sboms      []bomhort.SBOM
-	vulns      []bomhort.Vulnerability
-	raw        []byte
-	uploads    []string
-	statements []bomhort.VEXStatement
+	sboms        []bomhort.SBOM
+	vulns        []bomhort.Vulnerability
+	raw          []byte
+	uploads      []string
+	uploadScopes []string
+	statements   []bomhort.VEXStatement
 }
 
 func (f *fakeBOMHort) FindSBOM(_ context.Context, ref string) (bomhort.SBOM, error) {
@@ -45,8 +46,9 @@ func (f *fakeBOMHort) Dependencies(context.Context, string) ([]bomhort.Dependenc
 	return nil, nil
 }
 func (f *fakeBOMHort) DownloadSBOM(context.Context, string) ([]byte, error) { return f.raw, nil }
-func (f *fakeBOMHort) UploadVEX(_ context.Context, name string, doc []byte) (bomhort.UploadResult, error) {
+func (f *fakeBOMHort) UploadVEX(_ context.Context, name string, doc []byte, sbomID string) (bomhort.UploadResult, error) {
 	f.uploads = append(f.uploads, name)
+	f.uploadScopes = append(f.uploadScopes, sbomID)
 	var d vex.VEX
 	if err := json.Unmarshal(doc, &d); err != nil {
 		return bomhort.UploadResult{}, err
@@ -264,7 +266,7 @@ func TestDraftUploadAndList(t *testing.T) {
 		t.Fatal("expected error for empty assessments")
 	}
 
-	// upload by path
+	// upload by path (unscoped: BOMHort resolves the product @id itself)
 	var up uploadOut
 	res = s.call(t, "upload_vex", map[string]any{"path": out.Path}, &up)
 	if res.IsError {
@@ -273,10 +275,21 @@ func TestDraftUploadAndList(t *testing.T) {
 	if up.JobID != "j1" || s.bh.uploads[0] != out.Filename {
 		t.Fatalf("upload = %+v uploads=%v", up, s.bh.uploads)
 	}
-	// upload inline
-	res = s.call(t, "upload_vex", map[string]any{"filename": "x.openvex.json", "document": out.Document}, &up)
+	if s.bh.uploadScopes[0] != "" {
+		t.Fatalf("upload without sbom must be unscoped, got %q", s.bh.uploadScopes[0])
+	}
+	// upload inline, scoped to an SBOM by document name
+	res = s.call(t, "upload_vex", map[string]any{"filename": "x.openvex.json", "document": out.Document, "sbom": "other-app"}, &up)
 	if res.IsError {
 		t.Fatal(errText(res))
+	}
+	if s.bh.uploadScopes[1] != "s2" {
+		t.Fatalf("scoped upload should resolve sbom ref to id, got %q", s.bh.uploadScopes[1])
+	}
+	// unknown sbom scope
+	res = s.call(t, "upload_vex", map[string]any{"filename": "x.openvex.json", "document": out.Document, "sbom": "nope"}, &up)
+	if !res.IsError {
+		t.Fatal("expected unknown sbom error")
 	}
 	// bad filename
 	res = s.call(t, "upload_vex", map[string]any{"filename": "x.json", "document": out.Document}, &up)
@@ -307,6 +320,9 @@ func TestGenerateVEX(t *testing.T) {
 	}
 	if out.Findings != 1 || out.Skipped != 1 || out.Upload == nil || out.Upload.JobID != "j1" || out.DocumentID == "" {
 		t.Fatalf("out = %+v", out)
+	}
+	if s.bh.uploadScopes[0] != "s1" {
+		t.Fatalf("generate upload must be scoped to the SBOM (#350), got %q", s.bh.uploadScopes[0])
 	}
 	if out.Assessments[0].Status != vex.StatusUnderInvestigation {
 		t.Fatalf("heuristic offline should yield under_investigation: %+v", out.Assessments)

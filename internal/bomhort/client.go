@@ -30,6 +30,11 @@ type SBOM struct {
 	PackageCount uint64 `json:"package_count"`
 	VulnCount    uint64 `json:"vuln_count"`
 	IngestedAt   string `json:"ingested_at"`
+	// SourceRepo and SourceRef are the product's source repository and
+	// commit/tag as first-class SBOM attributes (BOMHort #332); empty on
+	// BOMHort <= 0.6.1 or when unknown.
+	SourceRepo string `json:"source_repo,omitempty"`
+	SourceRef  string `json:"source_ref,omitempty"`
 }
 
 // Paginated wraps list responses.
@@ -50,6 +55,17 @@ type Vulnerability struct {
 	SourceFile   string `json:"source_file"`
 	DiscoveredAt string `json:"discovered_at"`
 	VEXStatus    string `json:"vex_status,omitempty"`
+	// Effective VEX statement detail (BOMHort #335): the API returns exactly
+	// one row per (vuln_id, purl); the statement with the newest
+	// vex_timestamp wins. Empty on BOMHort <= 0.6.1.
+	VEXJustification string `json:"vex_justification,omitempty"`
+	VEXTimestamp     string `json:"vex_timestamp,omitempty"`
+	VEXStatementID   string `json:"vex_statement_id,omitempty"`
+	VEXAuthor        string `json:"vex_author,omitempty"`
+	VEXTooling       string `json:"vex_tooling,omitempty"`
+	// VEXScope is "sbom" when the winning statement is scoped to this SBOM,
+	// "global" for unscoped legacy statements (BOMHort #350).
+	VEXScope string `json:"vex_scope,omitempty"`
 }
 
 // DependencyNode is one entry of GET /api/v1/sboms/{id}/dependencies.
@@ -65,9 +81,11 @@ type DependencyNode struct {
 
 // VEXStatement is one entry of GET /api/v1/vex/statements.
 type VEXStatement struct {
-	VEXID           string `json:"vex_id"`
-	DocumentID      string `json:"document_id"`
-	SourceFile      string `json:"source_file"`
+	VEXID      string `json:"vex_id"`
+	DocumentID string `json:"document_id"`
+	SourceFile string `json:"source_file"`
+	// SBOMID scopes the statement to one SBOM (BOMHort #350); empty = global.
+	SBOMID          string `json:"sbom_id,omitempty"`
 	ProductPURL     string `json:"product_purl"`
 	VulnID          string `json:"vuln_id"`
 	Status          string `json:"status"`
@@ -76,6 +94,11 @@ type VEXStatement struct {
 	ActionStatement string `json:"action_statement,omitempty"`
 	VEXTimestamp    string `json:"vex_timestamp"`
 	IngestedAt      string `json:"ingested_at"`
+	// Provenance (BOMHort #334); empty when the source document has none.
+	Author      string `json:"author,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Tooling     string `json:"tooling,omitempty"`
+	StatusNotes string `json:"status_notes,omitempty"`
 }
 
 // UploadResult is the response of POST /api/v1/sboms/upload.
@@ -247,13 +270,20 @@ func (c *Client) AllVEXStatements(ctx context.Context) ([]VEXStatement, error) {
 }
 
 // UploadVEX pushes an OpenVEX document. filename must end in .openvex.json
-// (or .vex.json) so BOMHort classifies the job as VEX.
-func (c *Client) UploadVEX(ctx context.Context, filename string, doc []byte) (UploadResult, error) {
+// (or .vex.json) so BOMHort classifies the job as VEX. A non-empty sbomID
+// scopes every statement in the document to that SBOM (BOMHort #350,
+// ?sbom_id=); "" leaves the mapping to BOMHort's product-@id resolution
+// (global fallback on <= 0.6.1, which ignores the parameter).
+func (c *Client) UploadVEX(ctx context.Context, filename string, doc []byte, sbomID string) (UploadResult, error) {
 	if !strings.HasSuffix(filename, ".openvex.json") && !strings.HasSuffix(filename, ".vex.json") {
 		return UploadResult{}, fmt.Errorf("bomhort: filename %q must end in .openvex.json or .vex.json", filename)
 	}
+	path := "/api/v1/sboms/upload"
+	if sbomID != "" {
+		path += "?sbom_id=" + url.QueryEscape(sbomID)
+	}
 	var out UploadResult
-	_, err := c.do(ctx, http.MethodPost, "/api/v1/sboms/upload", &request{body: doc, headers: map[string]string{
+	_, err := c.do(ctx, http.MethodPost, path, &request{body: doc, headers: map[string]string{
 		"Content-Type": "application/json",
 		"X-Filename":   filename,
 	}}, &out)

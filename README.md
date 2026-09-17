@@ -217,7 +217,8 @@ every key overridable by `VEXVIPER_<SECTION>_<KEY>` and secrets via `*_env` indi
 ### Where does the product repository come from?
 
 Precedence: `--repo` flag / `repo` tool argument → `repo.override` → `repo.sboms` match →
-VCS external refs and main module in the SBOM → root PURLs. Missing refs are filled with
+BOMHort's `source_repo`/`source_ref` SBOM attributes (BOMHort ≥ #332) → VCS external refs
+and main module in the SBOM → root PURLs. Missing refs are filled with
 the version parsed from the SBOM name. `list_sboms` (MCP) shows `configured_repo` so an
 agent can see which SBOMs still need a pin.
 
@@ -315,7 +316,7 @@ when you only want the audit trail.
 | `get_repo_context` | resolve+clone repo, govulncheck, evidence + ready-made prompt per finding |
 | `draft_vex` | build a validated OpenVEX document from assessments the host provides |
 | `generate_vex` | run the full pipeline with the configured provider, optionally upload |
-| `upload_vex` | push a document to BOMHort |
+| `upload_vex` | push a document to BOMHort (optional `sbom` argument scopes it to one SBOM) |
 | `list_vex_statements` | verify BOMHort ingested it |
 
 Host config example: [examples/mcp-client-config.json](examples/mcp-client-config.json).

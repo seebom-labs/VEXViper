@@ -18,6 +18,9 @@ on:
         default: main
 env:
   # Bump when BOMHort's API changes are needed; keep it green on PRs.
+  # TODO: bump to a ref that includes seebom-labs/BOMHort#353 (fixes a 500 on
+  # /vulnerabilities introduced after this pin); 0916791… (VEX scoping, #350)
+  # is otherwise verified locally.
   BOMHORT_PINNED_REF: 32203c447643714debc75e66e1c99da58a3de600
 permissions:
   contents: read

@@ -25,6 +25,9 @@ type Finding struct {
 	FixedVersion string
 	// VEXStatus is the status BOMHort already applies from ingested VEX (empty if none).
 	VEXStatus string
+	// VEXTimestamp is the timestamp of the effective statement behind
+	// VEXStatus (BOMHort #335); empty on BOMHort <= 0.6.1.
+	VEXTimestamp string
 	// Direct is true when the package is a direct dependency of the product.
 	Direct bool
 	// DirectKnown is false when the SBOM carries no relationship data at all.
@@ -39,6 +42,10 @@ type Product struct {
 	SBOMID       string
 	DocumentName string
 	SourceFile   string
+	// SourceRepo and SourceRef are BOMHort's first-class source repository
+	// attributes for the SBOM (#332); empty when unknown.
+	SourceRepo string
+	SourceRef  string
 	// RepoHints are candidate source repositories for the product, best first.
 	RepoHints []string
 	// RootPURLs are the PURLs of the components the SBOM describes, if any.
@@ -74,7 +81,7 @@ func LoadSBOM(ctx context.Context, api API, s bomhort.SBOM) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("source: vulnerabilities of %s: %w", s.ID, err)
 	}
-	res := &Result{Product: Product{SBOMID: s.ID, DocumentName: s.DocumentName, SourceFile: s.SourceFile}}
+	res := &Result{Product: Product{SBOMID: s.ID, DocumentName: s.DocumentName, SourceFile: s.SourceFile, SourceRepo: s.SourceRepo, SourceRef: s.SourceRef}}
 
 	// Dependency tree: best effort.
 	direct := map[string]bool{}
@@ -107,9 +114,10 @@ func LoadSBOM(ctx context.Context, api API, s bomhort.SBOM) (*Result, error) {
 		}
 	}
 
-	// BOMHort may return one row per (finding, source_file/statement); VEX is
-	// keyed on (vuln_id, purl) so collapse duplicates, preferring a row that
-	// already carries a vex_status.
+	// Since #335 BOMHort returns exactly one row per (vuln_id, purl) with the
+	// effective statement; older gateways emitted one row per matching VEX
+	// statement. Collapse duplicates defensively, preferring a row that
+	// carries a vex_status (and, among those, the newest vex_timestamp).
 	seen := map[string]int{}
 	for _, v := range vulns {
 		f := Finding{
@@ -119,6 +127,7 @@ func LoadSBOM(ctx context.Context, api API, s bomhort.SBOM) (*Result, error) {
 			Summary:      v.Summary,
 			FixedVersion: v.FixedVersion,
 			VEXStatus:    v.VEXStatus,
+			VEXTimestamp: v.VEXTimestamp,
 			Direct:       direct[v.PURL],
 			DirectKnown:  directKnown,
 		}
@@ -135,14 +144,17 @@ func LoadSBOM(ctx context.Context, api API, s bomhort.SBOM) (*Result, error) {
 		}
 		key := f.VulnID + "\x00" + f.PURL
 		if i, dup := seen[key]; dup {
-			// BOMHort emits one row per matching VEX statement, so several
-			// documents for the same (vuln, purl) surface as duplicates with
-			// possibly different statuses. Any non-empty status means "already
-			// VEXed"; the newest statement is resolved via /vex/statements.
-			if res.Findings[i].VEXStatus == "" && f.VEXStatus != "" {
-				res.Findings[i].VEXStatus = f.VEXStatus
-			} else if f.VEXStatus != "" && f.VEXStatus != res.Findings[i].VEXStatus {
-				slog.Debug("source: conflicting vex_status rows", "sbom", s.ID, "vuln", f.VulnID, "purl", f.PURL, "kept", res.Findings[i].VEXStatus, "other", f.VEXStatus)
+			// Pre-#335 BOMHort emits one row per matching VEX statement, so
+			// several documents for the same (vuln, purl) surface as
+			// duplicates with possibly different statuses. Any non-empty
+			// status means "already VEXed".
+			prev := &res.Findings[i]
+			switch {
+			case f.VEXStatus == "":
+			case prev.VEXStatus == "":
+				prev.VEXStatus, prev.VEXTimestamp = f.VEXStatus, f.VEXTimestamp
+			case f.VEXStatus != prev.VEXStatus:
+				slog.Debug("source: conflicting vex_status rows", "sbom", s.ID, "vuln", f.VulnID, "purl", f.PURL, "kept", prev.VEXStatus, "other", f.VEXStatus)
 			}
 			continue
 		}

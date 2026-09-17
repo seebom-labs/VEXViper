@@ -39,7 +39,7 @@ func TestLoadWithTreeAndSBOM(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := &fakeAPI{
-		sbom: bomhort.SBOM{ID: "id-1", DocumentName: "bomhort", SourceFile: "bomhort-0.6.1.spdx.json"},
+		sbom: bomhort.SBOM{ID: "id-1", DocumentName: "bomhort", SourceFile: "bomhort-0.6.1.spdx.json", SourceRepo: "https://github.com/seebom-labs/bomhort", SourceRef: "v0.6.1"},
 		vulns: []bomhort.Vulnerability{
 			{VulnID: "GO-2023-2102", PURL: "pkg:golang/golang.org/x/net@v0.56.0", Severity: "HIGH", FixedVersion: "v0.17.0"},
 			{VulnID: "GHSA-1", PURL: "pkg:golang/github.com/klauspost/compress@v1.18.6", VEXStatus: "not_affected"},
@@ -58,6 +58,9 @@ func TestLoadWithTreeAndSBOM(t *testing.T) {
 	}
 	if res.Product.SBOMID != "id-1" || len(res.Product.RepoHints) == 0 || res.Product.RepoHints[0] != "https://github.com/seebom-labs/bomhort" {
 		t.Fatalf("product = %+v", res.Product)
+	}
+	if res.Product.SourceRepo != "https://github.com/seebom-labs/bomhort" || res.Product.SourceRef != "v0.6.1" {
+		t.Fatalf("source_repo/source_ref not propagated: %+v", res.Product)
 	}
 	if len(res.Findings) != 2 {
 		t.Fatalf("findings = %d (empty vuln id should be dropped)", len(res.Findings))
@@ -117,7 +120,7 @@ func TestLoadDeduplicatesFindings(t *testing.T) {
 		sbom: bomhort.SBOM{ID: "id-3"},
 		vulns: []bomhort.Vulnerability{
 			{VulnID: "GHSA-1", PURL: "pkg:npm/a@1", SourceFile: "x.spdx.json"},
-			{VulnID: "GHSA-1", PURL: "pkg:npm/a@1", SourceFile: "y.openvex.json", VEXStatus: "affected"},
+			{VulnID: "GHSA-1", PURL: "pkg:npm/a@1", SourceFile: "y.openvex.json", VEXStatus: "affected", VEXTimestamp: "2026-01-01T00:00:00Z"},
 			{VulnID: "GHSA-1", PURL: "pkg:npm/b@1"},
 			{VulnID: "GHSA-2", PURL: "pkg:npm/a@1"},
 		},
@@ -133,5 +136,8 @@ func TestLoadDeduplicatesFindings(t *testing.T) {
 	}
 	if res.Findings[0].VulnID != "GHSA-1" || res.Findings[0].PURL != "pkg:npm/a@1" || res.Findings[0].VEXStatus != "affected" {
 		t.Fatalf("duplicate should keep vex_status: %+v", res.Findings[0])
+	}
+	if res.Findings[0].VEXTimestamp != "2026-01-01T00:00:00Z" {
+		t.Fatalf("duplicate should carry the status row's vex_timestamp: %+v", res.Findings[0])
 	}
 }

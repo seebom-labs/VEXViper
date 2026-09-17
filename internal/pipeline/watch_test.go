@@ -179,10 +179,10 @@ func (m *multiBOMHort) FindSBOM(_ context.Context, ref string) (bomhort.SBOM, er
 	return s, nil
 }
 
-func (m *multiBOMHort) UploadVEX(ctx context.Context, name string, doc []byte) (bomhort.UploadResult, error) {
+func (m *multiBOMHort) UploadVEX(ctx context.Context, name string, doc []byte, sbomID string) (bomhort.UploadResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.fakeBOMHort.UploadVEX(ctx, name, doc)
+	return m.fakeBOMHort.UploadVEX(ctx, name, doc, sbomID)
 }
 
 // gauge counts concurrent Assess calls.

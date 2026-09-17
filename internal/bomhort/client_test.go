@@ -13,9 +13,10 @@ import (
 )
 
 // fakeServer imitates the subset of the BOMHort API gateway VEXViper uses.
-func fakeServer(t *testing.T, apiKey string) (*httptest.Server, *atomic.Int32) {
+func fakeServer(t *testing.T, apiKey string) (*httptest.Server, *atomic.Int32, *atomic.Pointer[string]) {
 	t.Helper()
 	var uploads atomic.Int32
+	var lastUploadScope atomic.Pointer[string]
 	mux := http.NewServeMux()
 	auth := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -85,16 +86,18 @@ func fakeServer(t *testing.T, apiKey string) (*httptest.Server, *atomic.Int32) {
 			return
 		}
 		uploads.Add(1)
+		scope := r.URL.Query().Get("sbom_id")
+		lastUploadScope.Store(&scope)
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(UploadResult{Status: "pending", JobID: "job-1", SHA256Hash: "abc", JobType: "vex"})
 	}))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	return srv, &uploads
+	return srv, &uploads, &lastUploadScope
 }
 
 func TestClientHappyPath(t *testing.T) {
-	srv, uploads := fakeServer(t, "k3y")
+	srv, uploads, lastUploadScope := fakeServer(t, "k3y")
 	c := New(srv.URL+"/", WithAPIKey("k3y"))
 	ctx := context.Background()
 
@@ -129,9 +132,12 @@ func TestClientHappyPath(t *testing.T) {
 	if err != nil || len(allSt) != 2 || allSt[1].VulnID != "GHSA-abc" {
 		t.Fatalf("AllVEXStatements = %+v, %v", allSt, err)
 	}
-	res, err := c.UploadVEX(ctx, "bomhort.openvex.json", []byte(`{"@context":"https://openvex.dev/ns/v0.2.0"}`))
+	res, err := c.UploadVEX(ctx, "bomhort.openvex.json", []byte(`{"@context":"https://openvex.dev/ns/v0.2.0"}`), "sbom-1")
 	if err != nil || res.Status != "pending" || res.JobType != "vex" {
 		t.Fatalf("UploadVEX = %+v, %v", res, err)
+	}
+	if got := lastUploadScope.Load(); got == nil || *got != "sbom-1" {
+		t.Fatalf("upload sbom_id scope = %v", got)
 	}
 	if uploads.Load() != 1 {
 		t.Fatalf("uploads = %d", uploads.Load())
@@ -139,7 +145,7 @@ func TestClientHappyPath(t *testing.T) {
 }
 
 func TestClientErrors(t *testing.T) {
-	srv, _ := fakeServer(t, "k3y")
+	srv, _, _ := fakeServer(t, "k3y")
 	ctx := context.Background()
 
 	unauth := New(srv.URL)
@@ -157,7 +163,7 @@ func TestClientErrors(t *testing.T) {
 	if _, err := c.FindSBOM(ctx, "missing"); err == nil {
 		t.Fatal("expected FindSBOM error")
 	}
-	if _, err := c.UploadVEX(ctx, "doc.txt", []byte("x")); err == nil {
+	if _, err := c.UploadVEX(ctx, "doc.txt", []byte("x"), ""); err == nil {
 		t.Fatal("expected filename validation error")
 	}
 }

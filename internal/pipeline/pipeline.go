@@ -37,7 +37,7 @@ var Version = "dev"
 // BOMHortAPI is what the pipeline needs from BOMHort (source.API + upload).
 type BOMHortAPI interface {
 	source.API
-	UploadVEX(ctx context.Context, filename string, doc []byte) (bomhort.UploadResult, error)
+	UploadVEX(ctx context.Context, filename string, doc []byte, sbomID string) (bomhort.UploadResult, error)
 }
 
 // StatementLister is implemented by BOMHort clients that can enumerate the
@@ -489,7 +489,9 @@ func (p *Pipeline) run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 		if len(built.Document.Statements) == 0 {
 			log.Info("nothing to upload: no statements")
 		} else {
-			r, err := p.BOMHort.UploadVEX(ctx, out.Filename, doc)
+			// Scope the statements to this SBOM (BOMHort #350) so a
+			// not_affected never suppresses the CVE fleet-wide.
+			r, err := p.BOMHort.UploadVEX(ctx, out.Filename, doc, res.Product.SBOMID)
 			if err != nil {
 				return out, fmt.Errorf("upload: %w", err)
 			}
@@ -514,8 +516,9 @@ func (p *Pipeline) VEXOptions(provider string) vexgen.Options {
 }
 
 // MaterializeRepo resolves and clones the product repository. Order:
-// override → config override → SBOM hints → root PURLs. It returns the
-// checkout dir ("" if unavailable) and the repository URL it settled on.
+// override → config override → config-sbom pin → BOMHort source_repo →
+// SBOM hints → root PURLs. It returns the checkout dir ("" if unavailable)
+// and the repository URL it settled on.
 func (p *Pipeline) MaterializeRepo(ctx context.Context, prod source.Product, override string) (string, string) {
 	log := p.Log
 	if log == nil {
@@ -541,6 +544,19 @@ func (p *Pipeline) MaterializeRepo(ctx context.Context, prod source.Product, ove
 		candidates = append(candidates, loc)
 	} else if override != "" {
 		log.Warn("repo override not understood", "override", override)
+	}
+	// BOMHort's first-class source_repo/source_ref (#332) beat hints guessed
+	// from the SBOM document.
+	if prod.SourceRepo != "" {
+		if loc, ok := repo.FromOverride(prod.SourceRepo); ok {
+			loc.How = "bomhort"
+			if loc.Ref == "" {
+				loc.Ref = nonEmpty(prod.SourceRef, fallbackRef)
+			}
+			candidates = append(candidates, loc)
+		} else {
+			log.Warn("BOMHort source_repo not understood", "source_repo", prod.SourceRepo, "sbom", prod.SBOMID)
+		}
 	}
 	for _, h := range prod.RepoHints {
 		if loc, ok := repo.FromOverride(h); ok {
@@ -659,9 +675,30 @@ var settled = map[string]bool{
 
 // staleStatements returns the (vuln_id, purl) keys of findings whose newest
 // BOMHort statement is older than ttl and whose status is reassessable.
+// Since BOMHort #335 the effective statement's vex_timestamp is on the
+// vulnerability row itself; only findings without one (BOMHort <= 0.6.1)
+// fall back to the client-side join over /api/v1/vex/statements.
 func (p *Pipeline) staleStatements(ctx context.Context, findings []source.Finding, ttl time.Duration, log *slog.Logger) map[string]bool {
 	stale := map[string]bool{}
 	if ttl <= 0 {
+		return stale
+	}
+	cutoff := time.Now().Add(-ttl)
+	var missing []source.Finding
+	for _, f := range findings {
+		if !reassessable[f.VEXStatus] {
+			continue
+		}
+		ts := parseTime(f.VEXTimestamp)
+		if ts.IsZero() {
+			missing = append(missing, f)
+			continue
+		}
+		if ts.Before(cutoff) {
+			stale[statementKey(f.VulnID, f.PURL)] = true
+		}
+	}
+	if len(missing) == 0 {
 		return stale
 	}
 	lister, ok := p.BOMHort.(StatementLister)
@@ -685,11 +722,7 @@ func (p *Pipeline) staleStatements(ctx context.Context, findings []source.Findin
 			newest[k] = ts
 		}
 	}
-	cutoff := time.Now().Add(-ttl)
-	for _, f := range findings {
-		if !reassessable[f.VEXStatus] {
-			continue
-		}
+	for _, f := range missing {
 		ts, known := newest[statementKey(f.VulnID, f.PURL)]
 		if known && ts.Before(cutoff) {
 			stale[statementKey(f.VulnID, f.PURL)] = true

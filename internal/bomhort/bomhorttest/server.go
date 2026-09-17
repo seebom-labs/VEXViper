@@ -17,6 +17,8 @@ import (
 type Upload struct {
 	Filename string
 	Body     []byte
+	// SBOMID is the ?sbom_id= scope of the upload ("" = global).
+	SBOMID string
 }
 
 // Server is a fake BOMHort.
@@ -172,18 +174,26 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "empty body"})
 		return
 	}
+	sbomID := r.URL.Query().Get("sbom_id")
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.Uploads = append(s.Uploads, Upload{Filename: name, Body: body})
+	if sbomID != "" {
+		if _, ok := s.Vulns[sbomID]; !ok {
+			writeJSON(w, 400, map[string]string{"error": "?sbom_id= must be a valid SBOM UUID"})
+			return
+		}
+	}
+	s.Uploads = append(s.Uploads, Upload{Filename: name, Body: body, SBOMID: sbomID})
 	if s.ApplyUploads {
-		s.apply(body, name)
+		s.apply(body, name, sbomID)
 	}
 	writeJSON(w, http.StatusAccepted, bomhort.UploadResult{Status: "pending", JobID: "job-" + strconv.Itoa(len(s.Uploads)), SHA256Hash: "fake", JobType: "vex"})
 }
 
 // apply mimics BOMHort's VEX ingestion: statements are stored and matched
-// on exact (vuln_id, purl) equality.
-func (s *Server) apply(body []byte, name string) {
+// on exact (vuln_id, purl) equality; a non-empty sbomID scopes the effect
+// to that SBOM (#350).
+func (s *Server) apply(body []byte, name, sbomID string) {
 	var doc struct {
 		ID         string `json:"@id"`
 		Timestamp  string `json:"timestamp"`
@@ -212,11 +222,21 @@ func (s *Server) apply(body []byte, name string) {
 			if purl == "" {
 				purl = p.ID
 			}
-			s.Statements = append(s.Statements, bomhort.VEXStatement{DocumentID: doc.ID, SourceFile: name, ProductPURL: purl, VulnID: st.Vulnerability.Name, Status: st.Status, Justification: st.Justification, ImpactStatement: st.ImpactStatement, ActionStatement: st.ActionStatement, VEXTimestamp: doc.Timestamp})
+			s.Statements = append(s.Statements, bomhort.VEXStatement{DocumentID: doc.ID, SourceFile: name, SBOMID: sbomID, ProductPURL: purl, VulnID: st.Vulnerability.Name, Status: st.Status, Justification: st.Justification, ImpactStatement: st.ImpactStatement, ActionStatement: st.ActionStatement, VEXTimestamp: doc.Timestamp})
 			for id, vs := range s.Vulns {
+				if sbomID != "" && id != sbomID {
+					continue
+				}
 				for i := range vs {
 					if vs[i].VulnID == st.Vulnerability.Name && vs[i].PURL == purl {
 						vs[i].VEXStatus = st.Status
+						vs[i].VEXJustification = st.Justification
+						vs[i].VEXTimestamp = doc.Timestamp
+						if sbomID != "" {
+							vs[i].VEXScope = "sbom"
+						} else {
+							vs[i].VEXScope = "global"
+						}
 					}
 				}
 				s.Vulns[id] = vs

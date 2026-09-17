@@ -297,7 +297,7 @@ func (s *Server) draftVEX(ctx context.Context, _ *mcp.CallToolRequest, in draftI
 		}
 	}
 	if in.Upload {
-		r, err := s.Pipeline.BOMHort.UploadVEX(ctx, out.Filename, data)
+		r, err := s.Pipeline.BOMHort.UploadVEX(ctx, out.Filename, data, res.Product.SBOMID)
 		if err != nil {
 			return nil, docOut{}, fmt.Errorf("document built but upload failed: %w", err)
 		}
@@ -356,6 +356,9 @@ type uploadIn struct {
 	// Document is the OpenVEX JSON (object); alternatively give Path.
 	Document map[string]any `json:"document,omitempty"`
 	Path     string         `json:"path,omitempty"`
+	// SBOM scopes the statements to one SBOM (id, document name or source
+	// file); empty leaves the mapping to BOMHort's product-@id resolution.
+	SBOM string `json:"sbom,omitempty"`
 }
 
 func (s *Server) uploadVEX(ctx context.Context, _ *mcp.CallToolRequest, in uploadIn) (*mcp.CallToolResult, uploadOut, error) {
@@ -391,7 +394,15 @@ func (s *Server) uploadVEX(ctx context.Context, _ *mcp.CallToolRequest, in uploa
 			return nil, uploadOut{}, fmt.Errorf("statement %d invalid: %w", i, err)
 		}
 	}
-	r, err := s.Pipeline.BOMHort.UploadVEX(ctx, name, data)
+	sbomID := ""
+	if in.SBOM != "" {
+		sb, err := s.Pipeline.BOMHort.FindSBOM(ctx, in.SBOM)
+		if err != nil {
+			return nil, uploadOut{}, err
+		}
+		sbomID = sb.ID
+	}
+	r, err := s.Pipeline.BOMHort.UploadVEX(ctx, name, data, sbomID)
 	if err != nil {
 		return nil, uploadOut{}, err
 	}
