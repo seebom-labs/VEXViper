@@ -17,8 +17,8 @@ on:
         default: main
 env:
   # Bump when BOMHort's API changes are needed; keep it green on PRs.
-  # BOMHort v0.7.0 (per-SBOM VEX scoping, one-row /vulnerabilities, source_repo).
-  BOMHORT_PINNED_REF: 5d086ab07a0dbbafd93d6ca0a87833b1dc6179f1
+  # BOMHort v0.7.1 (per-SBOM VEX scoping, one-row /vulnerabilities, source_repo).
+  BOMHORT_PINNED_REF: f36a895164822778d78e70fe23e085a2b04ee4c3
 permissions:
   contents: read
 concurrency:

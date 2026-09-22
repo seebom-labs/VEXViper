@@ -388,7 +388,7 @@ BOMHORT_SRC=~/GolandProjects/seebom make e2e-ci       # builds BOMHort from sour
 Env: `BOMHORT_IMAGE_PREFIX`/`BOMHORT_IMAGE_TAG` to pick images, `BOMHORT_BUILD=1` to build
 them from `$BOMHORT_SRC/backend/Dockerfile`, `--keep` to leave the stack up. The published
 `ghcr.io/seebom-labs/bomhort/*:0.6.1` images predate the upload endpoint; use
-`BOMHORT_IMAGE_PREFIX=ghcr.io/seebom-labs/bomhort/ BOMHORT_IMAGE_TAG=0.7.0` or build from source.
+`BOMHORT_IMAGE_PREFIX=ghcr.io/seebom-labs/bomhort/ BOMHORT_IMAGE_TAG=0.7.1` or build from source.
 
 **CI:** `.github/workflows/e2e.yml` runs the same script on every PR against a pinned
 BOMHort commit (`BOMHORT_PINNED_REF`) and weekly against BOMHort `main`; the generated
