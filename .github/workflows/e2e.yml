@@ -50,9 +50,9 @@ jobs:
       matrix:
         ref: ${{ fromJSON(needs.refs.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Checkout BOMHort
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: seebom-labs/BOMHort
           ref: ${{ matrix.ref }}
