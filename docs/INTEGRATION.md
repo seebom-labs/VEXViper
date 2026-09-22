@@ -100,13 +100,13 @@ Filed as tracking epic [BOMHort#338](https://github.com/seebom-labs/BOMHort/issu
 
 | Issue | Feature | Status |
 |---|---|---|
-| [#332](https://github.com/seebom-labs/BOMHort/issues/332) | `source_repo` / `source_ref` per SBOM | **landed** (BOMHort main) — used by repo resolution, beats SBOM hints |
+| [#332](https://github.com/seebom-labs/BOMHort/issues/332) | `source_repo` / `source_ref` per SBOM | **landed** (BOMHort ≥ 0.7.0) — used by repo resolution, beats SBOM hints |
 | [#333](https://github.com/seebom-labs/BOMHort/issues/333) | `since`/cursor listing, `vex_status=missing` filter | open — `watch` still lists everything each pass |
-| [#335](https://github.com/seebom-labs/BOMHort/issues/335) | one row per `(vuln_id, purl)`, latest statement wins, `vex_timestamp` | **landed** (BOMHort main) — re-triage TTL reads the row timestamp |
+| [#335](https://github.com/seebom-labs/BOMHort/issues/335) | one row per `(vuln_id, purl)`, latest statement wins, `vex_timestamp` | **landed** (BOMHort ≥ 0.7.0) — re-triage TTL reads the row timestamp |
 | [#336](https://github.com/seebom-labs/BOMHort/issues/336) | idempotent upload + job status | open — `--wait` still re-reads the vulnerabilities endpoint |
-| [#334](https://github.com/seebom-labs/BOMHort/issues/334) | statement provenance + automated/human badge | **landed** (BOMHort main) — `author`/`role`/`tooling`/`status_notes` surfaced |
+| [#334](https://github.com/seebom-labs/BOMHort/issues/334) | statement provenance + automated/human badge | **landed** (BOMHort ≥ 0.7.0) — `author`/`role`/`tooling`/`status_notes` surfaced |
 | [#337](https://github.com/seebom-labs/BOMHort/issues/337) | outbound webhooks | open |
-| [#350](https://github.com/seebom-labs/BOMHort/issues/350) | per-SBOM statement scoping (`?sbom_id=` upload, `vex_scope`) | **landed** (BOMHort main) — VEXViper always uploads scoped |
+| [#350](https://github.com/seebom-labs/BOMHort/issues/350) | per-SBOM statement scoping (`?sbom_id=` upload, `vex_scope`) | **landed** (BOMHort ≥ 0.7.0) — VEXViper always uploads scoped |
 
 The original proposal text is kept below for context.
 
