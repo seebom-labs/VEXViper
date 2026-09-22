@@ -37,6 +37,9 @@ agent) can drive or review the triage interactively.
 
 ## Status
 
+**Requires BOMHort ≥ 0.7.0** (per-SBOM VEX scoping, one row per `(vuln_id, purl)`,
+`source_repo`). Older gateways accept uploads but ignore the scoping parameter.
+
 `examples/bomhort-0.6.1.openvex.json` was generated end-to-end against a real BOMHort
 instance from BOMHort's own release SBOM: 9 findings → 9 statements → BOMHort applied all
 9 (`6× not_affected` backed by govulncheck, `3× under_investigation` for npm components
@@ -384,8 +387,8 @@ BOMHORT_SRC=~/GolandProjects/seebom make e2e-ci       # builds BOMHort from sour
 
 Env: `BOMHORT_IMAGE_PREFIX`/`BOMHORT_IMAGE_TAG` to pick images, `BOMHORT_BUILD=1` to build
 them from `$BOMHORT_SRC/backend/Dockerfile`, `--keep` to leave the stack up. The published
-`ghcr.io/seebom-labs/bomhort/*:0.6.1` images predate the upload endpoint, so build from
-source until the next BOMHort release.
+`ghcr.io/seebom-labs/bomhort/*:0.6.1` images predate the upload endpoint; use
+`BOMHORT_IMAGE_PREFIX=ghcr.io/seebom-labs/bomhort/ BOMHORT_IMAGE_TAG=0.7.0` or build from source.
 
 **CI:** `.github/workflows/e2e.yml` runs the same script on every PR against a pinned
 BOMHort commit (`BOMHORT_PINNED_REF`) and weekly against BOMHort `main`; the generated
