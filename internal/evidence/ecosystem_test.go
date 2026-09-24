@@ -241,7 +241,7 @@ func TestEcosystemEvidenceUnknownOrNoRepo(t *testing.T) {
 	if got := c.ecosystemEvidence(dir, source.Finding{PURL: "pkg:golang/x@1"}); got != nil {
 		t.Fatalf("golang is not handled here: %v", got)
 	}
-	if got := c.ecosystemEvidence(dir, source.Finding{PURL: "pkg:nuget/Foo@1"}); got != nil {
+	if got := c.ecosystemEvidence(dir, source.Finding{PURL: "pkg:hex/foo@1"}); got != nil {
 		t.Fatalf("unknown ecosystem: %v", got)
 	}
 }
@@ -327,7 +327,7 @@ func TestCollectNonGoUsesEcosystemEvidence(t *testing.T) {
 		}
 		for _, it := range r.Items {
 			if it.Strong {
-				t.Fatalf("non-Go evidence must not be Strong: %+v", it)
+				t.Fatalf("non-Go evidence without a lockfile graph must not be Strong: %+v", it)
 			}
 		}
 	})

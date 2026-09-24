@@ -134,6 +134,9 @@ func TestGuardrails(t *testing.T) {
 		{"fixed without version evidence", entry("V4", "pkg:npm/a@1", llm.Assessment{Status: vex.StatusFixed, Confidence: 0.99}), vex.StatusUnderInvestigation, "fixed claimed"},
 		{"invalid assessment", entry("V5", "pkg:npm/a@1", llm.Assessment{Status: "bogus", Confidence: 0.5}), vex.StatusUnderInvestigation, "invalid assessment"},
 		{"low confidence affected stays", entry("V6", "pkg:npm/a@1", llm.Assessment{Status: vex.StatusAffected, Confidence: 0.2}), vex.StatusAffected, ""},
+		{"strong lockfile dev_dependency supports not_affected", entry("V8", "pkg:npm/minimist@1.2.0", llm.Assessment{Status: vex.StatusNotAffected, Justification: vex.VulnerableCodeNotPresent, ImpactStatement: "dev only", Confidence: 0.8}, strong(evidence.KindDevDependency), weak(evidence.KindTransitive)), vex.StatusNotAffected, ""},
+		{"strong import_not_found supports not_affected", entry("V9", "pkg:npm/left-pad@1.3.0", llm.Assessment{Status: vex.StatusNotAffected, Justification: vex.VulnerableCodeNotInExecutePath, ImpactStatement: "never imported", Confidence: 0.7}, strong(evidence.KindImportNotFound), weak(evidence.KindDependencyPath)), vex.StatusNotAffected, ""},
+		{"weak dev_dependency does not", entry("V10", "pkg:npm/minimist@1.2.0", llm.Assessment{Status: vex.StatusNotAffected, Justification: vex.VulnerableCodeNotPresent, Confidence: 0.9}, weak(evidence.KindDevDependency), weak(evidence.KindDirectDependency)), vex.StatusUnderInvestigation, "strong deterministic evidence"},
 		{"llm normalization", entry("V7", "pkg:npm/a@1", llm.Assessment{Status: "Not-Affected", Justification: "Vulnerable_Code_Not_In_Execute_Path", ActionStatement: "junk", Confidence: 0.9}, strong(evidence.KindNotReachable)), vex.StatusNotAffected, ""},
 	}
 	for _, tc := range cases {

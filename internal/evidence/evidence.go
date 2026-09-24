@@ -144,19 +144,26 @@ func (c *Collector) Collect(ctx context.Context, f source.Finding, repoDir strin
 	case gvc != nil && isGo:
 		r.Items = append(r.Items, gvc.EvidenceFor(f.VulnID, r.OSV)...)
 	case !isGo:
-		// Manifest/lockfile depth and import scan for npm, pypi, cargo, gem,
-		// composer, maven. Never Strong: it does not prove reachability.
-		eco := c.ecosystemEvidence(repoDir, f)
-		if f.DirectKnown {
-			// BOMHort's dependency graph already settled direct vs transitive.
-			eco = dropKinds(eco, KindDirectDependency, KindTransitive)
+		// Manifest/lockfile depth, lockfile graph and import scan for npm,
+		// pypi, cargo, gem, composer, maven, nuget, pub. Strong only for the
+		// exact facts described in ecosystem.go.
+		scan := c.scanEcosystem(repoDir, f)
+		if scan != nil {
+			eco := scan.items(f)
+			if f.DirectKnown {
+				// BOMHort's dependency graph already settled direct vs transitive.
+				eco = dropKinds(eco, KindDirectDependency, KindTransitive)
+			}
+			r.Items = append(r.Items, eco...)
+			if r.OSV != nil && scan.eco == "cargo" {
+				r.Items = append(r.Items, c.rustSymbolEvidence(repoDir, scan, r.OSV, f)...)
+			}
 		}
-		r.Items = append(r.Items, eco...)
-		r.Items = append(r.Items, Item{Kind: KindNoReachabilityTool, Summary: fmt.Sprintf("no call-graph reachability analysis available for %s; manifest, lockfile and import evidence above does not prove whether the vulnerable code executes", ecosystem(f.PURL))})
+		r.Items = append(r.Items, Item{Kind: KindNoReachabilityTool, Summary: fmt.Sprintf("no call-graph reachability analysis available for %s; manifest, lockfile-graph and import evidence above approximates it but only the items marked strong prove anything about whether the vulnerable code executes", ecosystem(f.PURL))})
 	}
 
-	// 5. vulnerable symbol grep
-	if r.OSV != nil && strings.HasPrefix(f.PURL, "pkg:golang/") {
+	// 5. vulnerable symbol grep (Go)
+	if r.OSV != nil && isGo {
 		r.Items = append(r.Items, c.symbolEvidence(repoDir, r.OSV)...)
 	}
 	return r

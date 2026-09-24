@@ -30,7 +30,7 @@ import (
 
 // Version is mixed into every key; bump it when the prompt or schema changes
 // in a way that should invalidate old verdicts.
-const Version = "v1"
+const Version = "v2"
 
 // Key identifies one assessment question.
 type Key struct {
