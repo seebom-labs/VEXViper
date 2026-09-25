@@ -17,9 +17,15 @@ import (
 //  1. version_fixed                              → fixed (0.95)
 //  2. govulncheck_reachable                      → affected (0.9)
 //  3. govulncheck_not_reachable [strong]         → not_affected / vulnerable_code_not_in_execute_path (0.85)
-//  4. import_not_found + transitive dependency   → under_investigation (0.5)  (too weak alone)
-//  5. symbol_not_referenced + direct dependency  → under_investigation (0.55)
-//  6. everything else                            → under_investigation (0.3)
+//  4. dev_dependency [strong]                    → not_affected / vulnerable_code_not_present (0.8)
+//     (lockfile resolves the package outside the runtime closure)
+//  5. symbol_not_referenced [strong]             → not_affected / vulnerable_code_not_in_execute_path (0.75)
+//     (Rust: RustSec functions absent, product code is the crate's only consumer)
+//  6. import_not_found [strong]                  → not_affected / vulnerable_code_not_in_execute_path (0.7)
+//     (direct dependency nobody else depends on, never imported by product code)
+//  7. import_not_found + transitive dependency   → under_investigation (0.5)  (too weak alone)
+//  8. symbol_not_referenced + direct dependency  → under_investigation (0.55)
+//  9. everything else                            → under_investigation (0.3)
 type Heuristic struct{}
 
 // Name implements Provider.
@@ -51,6 +57,27 @@ func (h Heuristic) Assess(_ context.Context, req Request) (Assessment, error) {
 		a.Confidence = 0.85
 		a.Reasoning = "Static call-graph analysis found no path to the vulnerable code."
 		a.EvidenceRefs = []string{string(evidence.KindNotReachable)}
+	case hasStrong(r, evidence.KindDevDependency):
+		a.Status = vex.StatusNotAffected
+		a.Justification = vex.VulnerableCodeNotPresent
+		a.ImpactStatement = "The package manager's lockfile resolves the package outside the runtime dependency closure (development/test only); its code is not part of the shipped product."
+		a.Confidence = 0.8
+		a.Reasoning = "The lockfile marks the package as reachable only through development dependencies."
+		a.EvidenceRefs = []string{string(evidence.KindDevDependency)}
+	case hasStrong(r, evidence.KindSymbolNotReferenced):
+		a.Status = vex.StatusNotAffected
+		a.Justification = vex.VulnerableCodeNotInExecutePath
+		a.ImpactStatement = "Product code is the only consumer of the crate (no other dependency depends on it) and never references the functions the advisory names as vulnerable."
+		a.Confidence = 0.75
+		a.Reasoning = "Lexical symbol analysis over the sole consumer found no reference to the vulnerable functions."
+		a.EvidenceRefs = []string{string(evidence.KindSymbolNotReferenced), string(evidence.KindDependencyPath)}
+	case hasStrong(r, evidence.KindImportNotFound):
+		a.Status = vex.StatusNotAffected
+		a.Justification = vex.VulnerableCodeNotInExecutePath
+		a.ImpactStatement = "The package is a direct dependency that no other dependency depends on, and no non-test source file of the product imports it; nothing in the product loads its code."
+		a.Confidence = 0.7
+		a.Reasoning = "Lockfile graph shows product code as the only possible caller and the import scan found none."
+		a.EvidenceRefs = []string{string(evidence.KindImportNotFound), string(evidence.KindDependencyPath)}
 	case r.Has(evidence.KindImportNotFound) && r.Has(evidence.KindTransitive):
 		a.Status = vex.StatusUnderInvestigation
 		a.Confidence = 0.5

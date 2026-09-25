@@ -60,9 +60,13 @@ type Event struct {
 	LastAffected string `json:"last_affected,omitempty"`
 }
 
-// EcoSpecific carries Go ecosystem data (vulnerable imports/symbols).
+// EcoSpecific carries ecosystem data: Go vulnerable imports/symbols and
+// RustSec's affected functions.
 type EcoSpecific struct {
 	Imports []Import `json:"imports"`
+	Affects struct {
+		Functions []string `json:"functions"`
+	} `json:"affects"`
 }
 
 // Import lists vulnerable symbols of a package path.
@@ -165,6 +169,16 @@ func (v *Vulnerability) VulnerableImports() []Import {
 		imports = append(imports, a.EcosystemSpecific.Imports...)
 	}
 	return imports
+}
+
+// VulnerableFunctions collects RustSec's affected function paths
+// (crate::module::function) from ecosystem_specific.affects.
+func (v *Vulnerability) VulnerableFunctions() []string {
+	var out []string
+	for _, a := range v.Affected {
+		out = append(out, a.EcosystemSpecific.Affects.Functions...)
+	}
+	return out
 }
 
 // ReferenceURLs returns references of the given types (e.g. "FIX", "ADVISORY"); empty types returns all.

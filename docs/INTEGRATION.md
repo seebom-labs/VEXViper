@@ -81,8 +81,11 @@ Secrets: one Secret with `api-key` (BOMHort) and optionally `openai-api-key`.
 
 ## 4. Safety posture
 
-* Default provider is **heuristic**; it can only produce `not_affected` when govulncheck
-  proves the vulnerable symbol unreachable. LLM providers are opt-in.
+* Default provider is **heuristic**; it can only produce `not_affected` on strong
+  deterministic evidence: govulncheck proves the vulnerable symbol unreachable, the lockfile
+  resolves the package outside the runtime closure, or the lockfile graph proves product
+  code is the package's only consumer and it never imports it / never references the
+  RustSec vulnerable functions (see "Strong evidence" below). LLM providers are opt-in.
 * LLM claims of `not_affected`/`fixed` without deterministic evidence are downgraded to
   `under_investigation` unless explicitly allowed.
 * Upload is opt-in; the default is a reviewable file. `author_role` and `status_notes` are
@@ -207,14 +210,41 @@ two-repo release, and (b) the right owner is the `seebom-labs` org (official cli
 their stdlib-only policy), which is a maintainer decision. Until then the package boundary is
 kept clean so `git filter-repo --path internal/bomhort` yields the library with history.
 
-## 9. Known limitations
+## 9. Strong evidence
+
+`not_affected` is only accepted with at least one strong evidence item. Strong means an
+exact fact from a tool or the package manager, never a lexical guess:
+
+| Kind | Source | Justification the heuristic emits |
+|---|---|---|
+| `version_fixed` | installed ≥ `fixed_version` | `fixed` |
+| `govulncheck_not_reachable` | govulncheck symbol level (Go) | `vulnerable_code_not_in_execute_path` |
+| `dev_dependency` | lockfile resolves the package outside the runtime closure: npm `dev: true`, pnpm `dev`, composer `packages-dev`, poetry `category`/`groups`, uv `dev-dependencies`, Pipfile.lock `develop`, Gradle test-only configurations, or complete graph + root dev split (yarn, Cargo single-crate, Gemfile groups) | `vulnerable_code_not_present` |
+| `import_not_found` | direct dependency, lockfile graph shows no other dependents, verbatim import syntax (npm, Cargo, Composer PSR-4, Dart), ≥1 non-test source scanned, no import, not in npm scripts / not a renamed crate | `vulnerable_code_not_in_execute_path` |
+| `symbol_not_referenced` | Cargo only: RustSec `affects.functions` present, crate used by product code, sole consumer, no function name/path referenced | `vulnerable_code_not_in_execute_path` |
+
+Not strong, by design: manifest-only dev declarations (the lockfile may still pull the
+package into the runtime closure), import misses for ecosystems where the import name is
+inferred (PyPI dist→module mapping, Java packages from groupId/artifactId, NuGet
+namespaces) or where frameworks load packages without an import (`Bundler.require`,
+Django `INSTALLED_APPS`), `dependency_path`, `package_imported`, `manifest_not_found`.
+
+What VEXViper deliberately does **not** run: `osv-scanner --call-analysis` (needs
+`cargo build`, i.e. arbitrary `build.rs` execution in an untrusted checkout), Maven/Gradle
+dependency resolution, `npm install`. The clone stays read-only apart from govulncheck.
+
+## 10. Known limitations
 
 * Repository resolution depends on SBOM quality: syft `dir:` SBOMs of Go repos resolve
   (VCS ref / main module); `pkg:generic/<name>@<ver>` roots without VCS refs need `--repo`
   or a `repo.sboms` pin in the config (matched by SBOM id / document name / source file).
 * Call-graph reachability (govulncheck) covers Go only. npm, PyPI, Cargo, RubyGems,
-  Composer and Maven products get version evidence, OSV context plus manifest/lockfile depth
-  (`dev_dependency`, `manifest_not_found`) and a source import scan (`package_imported`,
-  `import_not_found`, test paths excluded). None of it is strong evidence, so without an LLM
-  they end as `under_investigation` with a confidence that reflects the evidence.
+  Composer, Maven, NuGet and Dart products get version evidence, OSV context, the lockfile
+  graph (`dependency_path`, `dev_dependency`), manifest depth and a source import scan
+  (`package_imported`, `import_not_found`, test paths excluded); Cargo additionally a
+  lexical check for RustSec's vulnerable functions. Only the exact facts listed under
+  "Strong evidence" can carry `not_affected`; everything else ends as `under_investigation`
+  without an LLM, with a confidence that reflects the evidence. Advisories for npm, PyPI,
+  Maven, NuGet and Composer carry no vulnerable-function data, so function-level
+  reachability is impossible there regardless of tooling.
 * The heuristic provider never claims `affected` without govulncheck reachability.

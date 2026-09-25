@@ -19,8 +19,9 @@ BOMHort findings ──► resolve product repo ──► clone + govulncheck + 
 2. resolves the product's source repository (from the SBOM's VCS metadata / PURLs, or
    `--repo owner/name@ref`), clones it shallowly and gathers **deterministic evidence**:
    installed vs fixed version, direct/transitive depth, `govulncheck` reachability for Go
-   products, manifest/lockfile/import evidence for npm, PyPI, Cargo, RubyGems, Composer and
-   Maven products, symbol references, OSV details;
+   products, lockfile-graph / manifest / import evidence for npm, PyPI, Cargo, RubyGems,
+   Composer, Maven, NuGet and Dart products (see [Evidence per ecosystem](#evidence-per-ecosystem)),
+   RustSec vulnerable-function references for Rust, Go symbol references, OSV details;
 3. asks an assessment provider for `status/justification/confidence/reasoning` per finding —
    a rules-only **heuristic** (default, offline), any **OpenAI-compatible** endpoint,
    **GitHub Models** or the **GitHub Copilot CLI** (your Copilot subscription), or a tool on a
@@ -229,9 +230,13 @@ agent can see which SBOMs still need a pin.
 
 * **heuristic** (default) — no network, no key. `fixed` when installed ≥ `fixed_version`;
   `not_affected/vulnerable_code_not_in_execute_path` (0.85) when govulncheck finds no
-  reachable symbol; `affected` (0.9) when it does; otherwise `under_investigation` — with
-  a calibrated confidence and cited evidence for non-Go ecosystems (dev-only dependency
-  never imported 0.6, imported package 0.45 …) so reviewers can sort drafts.
+  reachable symbol; `affected` (0.9) when it does; `not_affected/vulnerable_code_not_present`
+  (0.8) when the lockfile resolves the package outside the runtime closure;
+  `not_affected/vulnerable_code_not_in_execute_path` when product code is provably the
+  package's only consumer and never references the RustSec vulnerable functions (0.75) or
+  never imports the package at all (0.7); otherwise `under_investigation` — with a
+  calibrated confidence and cited evidence (dev-only dependency never imported 0.6,
+  imported package 0.45 …) so reviewers can sort drafts.
 * **openai** — `POST {base_url}/chat/completions` with JSON-schema structured output,
   `temperature 0`. System prompt in [`internal/llm/prompt.go`](internal/llm/prompt.go)
   frames a *conservative* analyst and forbids inventing evidence.
@@ -266,14 +271,59 @@ Assessment schema: `status`, `justification`, `impact_statement`, `action_statem
 ### Guardrails (always on)
 
 * confidence `< min_confidence` → `under_investigation`;
-* `not_affected` requires at least one strong deterministic evidence item (govulncheck
-  unreachable, component absent …) unless `allow_unsupported_not_affected: true`.
-  Manifest, lockfile and import evidence for non-Go ecosystems (`dev_dependency`,
-  `package_imported`, `import_not_found`, `manifest_not_found`) is never strong: it shows
-  how a package is declared and imported, not whether the vulnerable code executes;
+* `not_affected` requires at least one **strong** deterministic evidence item unless
+  `allow_unsupported_not_affected: true`. Strong items are exact facts, never lexical
+  guesses: `govulncheck_not_reachable`, `version_fixed`, a lockfile-resolved `dev_dependency`,
+  and — only when the lockfile graph proves product code is the package's sole consumer —
+  `import_not_found` (npm, Cargo, Composer, Dart) and Rust `symbol_not_referenced`. All
+  other manifest/import evidence (`package_imported`, `dependency_path`, `manifest_not_found`,
+  inferred-import ecosystems) only shows how a package is declared and imported, not whether
+  the vulnerable code executes. Details in [Evidence per ecosystem](#evidence-per-ecosystem);
 * `fixed` requires a known `fixed_version` ≤ installed version;
 * every statement passes go-vex `Statement.Validate()`; `status_notes` records provider,
   confidence and reasoning; `tooling` records `vexviper/<version> provider=<name>`.
+
+### Evidence per ecosystem
+
+govulncheck is the only build-free call-graph tool VEXViper can run (osv-scanner's Rust
+call analysis needs `cargo build`, which would execute the checkout's build scripts; no
+comparable free tool exists for JVM, npm, PyPI, NuGet). Everywhere else the evidence comes
+from the package manager's **lockfile graph** plus a source scan, and only exact facts are
+marked strong:
+
+| Ecosystem | Lockfile graph (paths, dependents) | Dev-only (strong) | Import scan | Strong `import_not_found` | Vulnerable symbols |
+|---|---|---|---|---|---|
+| Go | govulncheck | – | – | – | govulncheck call graph (strong) |
+| npm | package-lock v1/v2/v3, yarn v1/berry, pnpm | npm `dev: true`, pnpm `dev`, computed from yarn/pnpm graph + `package.json` | `import`/`require` specifier | ✔ | – |
+| PyPI | poetry.lock, uv.lock (Pipfile.lock: flags only) | poetry `category`/`groups`, uv `dev-dependencies`, Pipfile.lock `develop` | `import`/`from` (dist→module table) | ✘ inferred names | – |
+| Cargo | Cargo.lock | computed from graph + `[dev-dependencies]` (single-crate) | `use`/`crate::` | ✔ | RustSec `affects.functions` lexical (strong when sole consumer) |
+| RubyGems | Gemfile.lock | computed from graph + `Gemfile` groups | `require` | ✘ `Bundler.require` | – |
+| Composer | composer.lock | `packages-dev` | PSR-4/PSR-0 namespaces from composer.lock | ✔ | – |
+| Maven/Gradle | gradle.lockfile (flags only) | Gradle test-only configurations, pom `<scope>test</scope>` (manifest, weak) | Java package guessed from groupId/artifactId | ✘ inferred | – |
+| NuGet | packages.lock.json | – (weak: `PrivateAssets="all"`) | `using` namespace = package id | ✘ inferred | – |
+| Dart/pub | pubspec.lock (depth only) | – (weak: `dev_dependencies`) | `import 'package:…'` | ✘ no graph | – |
+
+**Strong `dev_dependency`** — the package manager itself resolved the package outside the
+runtime closure, or the lockfile carries the complete edge set plus the root's runtime/dev
+split so the closure is computed exactly. A manifest-only `devDependencies` entry is *not*
+strong: the lockfile may still pull the same package into the runtime closure through
+another dependency (VEXViper reports that case explicitly).
+
+**Strong `import_not_found`** (rule "product code is the only caller and does not load
+it") requires all of: the package is a direct dependency (BOMHort's graph wins over the
+manifest), the lockfile graph shows no other package depends on it, the ecosystem's import
+syntax names the package verbatim, at least one non-test source file was scanned, none
+imports it, and (npm) it is not invoked from `package.json` scripts / (Cargo) not renamed
+via `package = "…"`.
+
+**Strong Rust `symbol_not_referenced`** — same sole-consumer conditions, the advisory lists
+`affects.functions`, product files that use the crate never mention those function names
+or paths. Macros and re-exports can hide a call, which is why the heuristic grades this
+below govulncheck (0.75) and a reviewer should treat it as a lexical result.
+
+Every other item (`dependency_path`, `package_imported`, non-strong `import_not_found`,
+`manifest_not_found`, `no_reachability_analysis`) is context for the provider and the
+reviewer; the guardrails never let it justify `not_affected` on its own.
 
 ### Review-first GitOps mode (`vex.git`)
 
@@ -388,7 +438,7 @@ BOMHORT_SRC=~/GolandProjects/seebom make e2e-ci       # builds BOMHort from sour
 Env: `BOMHORT_IMAGE_PREFIX`/`BOMHORT_IMAGE_TAG` to pick images, `BOMHORT_BUILD=1` to build
 them from `$BOMHORT_SRC/backend/Dockerfile`, `--keep` to leave the stack up. The published
 `ghcr.io/seebom-labs/bomhort/*:0.6.1` images predate the upload endpoint; use
-`BOMHORT_IMAGE_PREFIX=ghcr.io/seebom-labs/bomhort/ BOMHORT_IMAGE_TAG=0.7.0` or build from source.
+`BOMHORT_IMAGE_PREFIX=ghcr.io/seebom-labs/bomhort/ BOMHORT_IMAGE_TAG=0.7.1` or build from source.
 
 **CI:** `.github/workflows/e2e.yml` runs the same script on every PR against a pinned
 BOMHort commit (`BOMHORT_PINNED_REF`) and weekly against BOMHort `main`; the generated

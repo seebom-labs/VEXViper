@@ -112,6 +112,11 @@ func TestHeuristic(t *testing.T) {
 		{"reachable", []evidence.Item{item(evidence.KindVersionVulnerable, false), item(evidence.KindReachable, true)}, vex.StatusAffected, ""},
 		{"not reachable strong", []evidence.Item{item(evidence.KindNotReachable, true)}, vex.StatusNotAffected, vex.VulnerableCodeNotInExecutePath},
 		{"not reachable weak", []evidence.Item{item(evidence.KindNotReachable, false)}, vex.StatusUnderInvestigation, ""},
+		{"dev dependency strong (lockfile)", []evidence.Item{item(evidence.KindDevDependency, true), item(evidence.KindTransitive, false), item(evidence.KindImportNotFound, false)}, vex.StatusNotAffected, vex.VulnerableCodeNotPresent},
+		{"rust symbol not referenced strong", []evidence.Item{item(evidence.KindSymbolNotReferenced, true), item(evidence.KindPackageImported, false), item(evidence.KindDependencyPath, false)}, vex.StatusNotAffected, vex.VulnerableCodeNotInExecutePath},
+		{"import not found strong (sole consumer)", []evidence.Item{item(evidence.KindDirectDependency, false), item(evidence.KindImportNotFound, true), item(evidence.KindDependencyPath, false)}, vex.StatusNotAffected, vex.VulnerableCodeNotInExecutePath},
+		{"import not found strong but fixed wins", []evidence.Item{item(evidence.KindVersionFixed, true), item(evidence.KindImportNotFound, true)}, vex.StatusFixed, ""},
+		{"reachable beats strong dev flag", []evidence.Item{item(evidence.KindReachable, true), item(evidence.KindDevDependency, true)}, vex.StatusAffected, ""},
 		{"transitive not imported", []evidence.Item{item(evidence.KindImportNotFound, false), item(evidence.KindTransitive, false)}, vex.StatusUnderInvestigation, ""},
 		{"symbol not referenced", []evidence.Item{item(evidence.KindSymbolNotReferenced, false)}, vex.StatusUnderInvestigation, ""},
 		{"dev dependency not imported", []evidence.Item{item(evidence.KindDevDependency, false), item(evidence.KindDirectDependency, false), item(evidence.KindImportNotFound, false)}, vex.StatusUnderInvestigation, ""},
@@ -137,6 +142,9 @@ func TestHeuristic(t *testing.T) {
 			}
 			if a.Provider != "heuristic" || a.Reasoning == "" {
 				t.Fatalf("meta = %+v", a)
+			}
+			if a.Status == vex.StatusNotAffected && a.Confidence < 0.6 {
+				t.Fatalf("not_affected below default min_confidence: %+v", a)
 			}
 			if strings.Contains(tc.name, "dev dependency") || strings.Contains(tc.name, "imported") {
 				if len(a.EvidenceRefs) == 0 || a.Confidence < 0.4 {
