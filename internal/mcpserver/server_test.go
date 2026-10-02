@@ -13,8 +13,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openvex/go-vex/pkg/vex"
+	bomhort "github.com/seebom-labs/bomhort-go"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/evidence"
 	"github.com/seebom-labs/vexviper/internal/llm"
@@ -38,7 +38,9 @@ func (f *fakeBOMHort) FindSBOM(_ context.Context, ref string) (bomhort.SBOM, err
 	}
 	return bomhort.SBOM{}, errors.New("sbom not found: " + ref)
 }
-func (f *fakeBOMHort) AllSBOMs(context.Context) ([]bomhort.SBOM, error) { return f.sboms, nil }
+func (f *fakeBOMHort) AllSBOMs(context.Context, *bomhort.SBOMListOptions) ([]bomhort.SBOM, error) {
+	return f.sboms, nil
+}
 func (f *fakeBOMHort) Vulnerabilities(context.Context, string) ([]bomhort.Vulnerability, error) {
 	return f.vulns, nil
 }
@@ -58,7 +60,8 @@ func (f *fakeBOMHort) UploadVEX(_ context.Context, name string, doc []byte, sbom
 	}
 	return bomhort.UploadResult{Status: "pending", JobID: "j1", SHA256Hash: "abc"}, nil
 }
-func (f *fakeBOMHort) VEXStatements(_ context.Context, page, size int) (bomhort.Paginated[bomhort.VEXStatement], error) {
+func (f *fakeBOMHort) ListVEXStatements(_ context.Context, o *bomhort.ListOptions) (bomhort.Paginated[bomhort.VEXStatement], error) {
+	page, size := o.Page, o.PageSize
 	start := (page - 1) * size
 	if start > len(f.statements) {
 		start = len(f.statements)

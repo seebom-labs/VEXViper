@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
+	bomhort "github.com/seebom-labs/bomhort-go"
 	"golang.org/x/mod/semver"
 
 	"github.com/seebom-labs/vexviper/internal/assesscache"
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/evidence"
 	"github.com/seebom-labs/vexviper/internal/gitops"
@@ -81,7 +81,7 @@ func New(cfg config.Config, log *slog.Logger) (*Pipeline, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	var opts []bomhort.Option
+	opts := []bomhort.Option{bomhort.WithUserAgent("vexviper")}
 	if cfg.BOMHort.APIKey != "" {
 		opts = append(opts, bomhort.WithAPIKey(cfg.BOMHort.APIKey))
 	}

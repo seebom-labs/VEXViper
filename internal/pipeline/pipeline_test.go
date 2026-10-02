@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +15,9 @@ import (
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
+	bomhort "github.com/seebom-labs/bomhort-go"
 
 	"github.com/seebom-labs/vexviper/internal/assesscache"
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/evidence"
 	"github.com/seebom-labs/vexviper/internal/gitops"
@@ -898,5 +900,28 @@ func TestOutcomeSummary(t *testing.T) {
 	}
 	if got := (&Outcome{}).Summary(); got != "0 finding(s), 0 statement(s)" {
 		t.Fatalf("empty = %q", got)
+	}
+}
+
+func TestNewBOMHortClientIdentifiesAsVEXViper(t *testing.T) {
+	var ua, key string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua, key = r.Header.Get("User-Agent"), r.Header.Get("X-API-Key")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+	cfg := config.Default()
+	cfg.BOMHort.URL = srv.URL
+	cfg.BOMHort.APIKey = "k"
+	cfg.LLM.Provider = "heuristic"
+	p, err := New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.BOMHort.(*bomhort.Client).Healthy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ua != "vexviper" || key != "k" {
+		t.Fatalf("User-Agent = %q, X-API-Key = %q", ua, key)
 	}
 }

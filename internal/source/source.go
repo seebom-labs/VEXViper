@@ -10,7 +10,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
+	bomhort "github.com/seebom-labs/bomhort-go"
+
 	"github.com/seebom-labs/vexviper/internal/sbom"
 )
 

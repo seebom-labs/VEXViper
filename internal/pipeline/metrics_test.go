@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
+	bomhort "github.com/seebom-labs/bomhort-go"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/llm"
 )
 

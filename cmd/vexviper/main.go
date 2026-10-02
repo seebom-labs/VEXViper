@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	bomhort "github.com/seebom-labs/bomhort-go"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/mcpserver"
 	"github.com/seebom-labs/vexviper/internal/pipeline"

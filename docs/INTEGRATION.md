@@ -9,7 +9,7 @@ BOMHort (`backend/`, Go 1.25, stdlib HTTP, ClickHouse) exposes **no plugin mecha
 no Go `plugin` loading, no gRPC/webhook hooks, no MCP. Its contribution guidelines require
 stdlib-only tests, discourage frameworks and ask contributors to *ask first* before adding
 Go dependencies. VEXViper needs `openvex/go-vex`, the MCP Go SDK, `packageurl-go` and
-`yaml.v3`, so the correct integration is an **out-of-tree sidecar speaking the public REST
+`yaml.v3` (plus the stdlib-only [`bomhort-go`](https://github.com/seebom-labs/bomhort-go) client), so the correct integration is an **out-of-tree sidecar speaking the public REST
 API** (`docs/api-reference` calls this "custom tooling"). Benefits:
 
 * zero changes to BOMHort; survives the announced 1.0 API freeze;
@@ -26,7 +26,7 @@ API** (`docs/api-reference` calls this "custom tooling"). Benefits:
 | `GET /api/v1/sboms/{id}/dependencies` | dependency tree → direct/transitive evidence | `Dependencies` |
 | `GET /api/v1/sboms/{id}/download` | original SBOM → repository hints only (VCS external refs, root PURLs, main Go module) | `DownloadSBOM` |
 | `POST /api/v1/sboms/upload?sbom_id={id}` + `X-Filename: <name>.openvex.json` + `X-API-Key` | ingest the generated document, scoped to the SBOM it describes (#350) | `UploadVEX` |
-| `GET /api/v1/vex/statements` | verify ingestion (`--wait`) | `VEXStatements` |
+| `GET /api/v1/vex/statements` | verify ingestion (`--wait`) | `AllVEXStatements`, `ListVEXStatements` |
 
 Rate limit (100 req / 10 s) is respected by the client's paging and there is no polling
 tighter than `--wait`'s 2 s interval.
@@ -200,15 +200,14 @@ steps:
       VEXVIPER_BOMHORT_URL: https://bomhort.example.com
 ```
 
-## 8. Should the BOMHort Go client be its own module?
+## 8. BOMHort Go client: `bomhort-go`
 
-Yes, eventually — `internal/bomhort` is already stdlib-only, VEXViper-agnostic and ships a
-fake server (`bomhorttest`), so it can be extracted mechanically as e.g.
-`github.com/seebom-labs/bomhort-go`. It is kept in-tree for now because (a) the API is not
-frozen before BOMHort 1.0 and a separate module would double every field change into a
-two-repo release, and (b) the right owner is the `seebom-labs` org (official client, matches
-their stdlib-only policy), which is a maintainer decision. Until then the package boundary is
-kept clean so `git filter-repo --path internal/bomhort` yields the library with history.
+The REST client and the `bomhorttest` fake gateway started as `internal/bomhort` and now live
+in their own stdlib-only module, [`github.com/seebom-labs/bomhort-go`](https://github.com/seebom-labs/bomhort-go),
+owned by `seebom-labs` and tested against real BOMHort releases (pinned) and BOMHort `main`
+(weekly API-drift job). VEXViper imports it as `bomhort`; the client methods in the table in
+§2 are bomhort-go methods. Client fixes and new BOMHort fields/endpoints belong upstream in
+bomhort-go — VEXViper only bumps the dependency.
 
 ## 9. Strong evidence
 

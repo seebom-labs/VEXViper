@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
+	bomhort "github.com/seebom-labs/bomhort-go"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/pipeline"
 )
@@ -59,7 +59,7 @@ func sbomRef(t *testing.T, c *bomhort.Client) bomhort.SBOM {
 		}
 		return s
 	}
-	all, err := c.AllSBOMs(ctx)
+	all, err := c.AllSBOMs(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestGenerateUploadRoundTrip(t *testing.T) {
 
 	// Wait for the parsing worker to ingest the VEX document.
 	err = p.Wait(ctx, doc.ID, 3*time.Minute, func(ctx context.Context) ([]bomhort.VEXStatement, error) {
-		pg, err := c.VEXStatements(ctx, 1, 100)
+		pg, err := c.ListVEXStatements(ctx, &bomhort.ListOptions{Page: 1, PageSize: 100})
 		return pg.Data, err
 	})
 	if err != nil {

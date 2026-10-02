@@ -11,13 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
+	bomhort "github.com/seebom-labs/bomhort-go"
+
 	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
 // SBOMLister lists SBOMs (bomhort.Client.AllSBOMs).
 type SBOMLister interface {
-	AllSBOMs(ctx context.Context) ([]bomhort.SBOM, error)
+	AllSBOMs(ctx context.Context, opts *bomhort.SBOMListOptions) ([]bomhort.SBOM, error)
 }
 
 // WatchState remembers which SBOM versions were already processed so the
@@ -150,7 +151,7 @@ func (p *Pipeline) watchPass(ctx context.Context, lister SBOMLister, state *Watc
 	if log == nil {
 		log = slog.Default()
 	}
-	sboms, err := lister.AllSBOMs(ctx)
+	sboms, err := lister.AllSBOMs(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("list sboms: %w", err)
 	}

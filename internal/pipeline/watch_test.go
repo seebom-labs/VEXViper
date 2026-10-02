@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	bomhort "github.com/seebom-labs/bomhort-go"
+
 	"github.com/seebom-labs/vexviper/internal/assesscache"
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/llm"
 )
 
@@ -20,7 +21,7 @@ type fakeLister struct {
 	calls int
 }
 
-func (l *fakeLister) AllSBOMs(context.Context) ([]bomhort.SBOM, error) {
+func (l *fakeLister) AllSBOMs(context.Context, *bomhort.SBOMListOptions) ([]bomhort.SBOM, error) {
 	l.calls++
 	return l.sboms, l.err
 }

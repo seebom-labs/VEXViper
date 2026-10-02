@@ -16,8 +16,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/openvex/go-vex/pkg/vex"
+	bomhort "github.com/seebom-labs/bomhort-go"
 
-	"github.com/seebom-labs/vexviper/internal/bomhort"
 	"github.com/seebom-labs/vexviper/internal/evidence"
 	"github.com/seebom-labs/vexviper/internal/llm"
 	"github.com/seebom-labs/vexviper/internal/pipeline"
@@ -27,8 +27,8 @@ import (
 
 // SBOMLister is the extra BOMHort capability the server needs beyond the pipeline.
 type SBOMLister interface {
-	AllSBOMs(ctx context.Context) ([]bomhort.SBOM, error)
-	VEXStatements(ctx context.Context, page, pageSize int) (bomhort.Paginated[bomhort.VEXStatement], error)
+	AllSBOMs(ctx context.Context, opts *bomhort.SBOMListOptions) ([]bomhort.SBOM, error)
+	ListVEXStatements(ctx context.Context, opts *bomhort.ListOptions) (bomhort.Paginated[bomhort.VEXStatement], error)
 }
 
 // Server holds the dependencies for the tool handlers.
@@ -88,7 +88,7 @@ type listSBOMsOut struct {
 }
 
 func (s *Server) listSBOMs(ctx context.Context, _ *mcp.CallToolRequest, in listSBOMsIn) (*mcp.CallToolResult, listSBOMsOut, error) {
-	list, err := s.Lister.AllSBOMs(ctx)
+	list, err := s.Lister.AllSBOMs(ctx, nil)
 	if err != nil {
 		return nil, listSBOMsOut{}, err
 	}
@@ -424,7 +424,7 @@ type statementsOut struct {
 func (s *Server) listVEXStatements(ctx context.Context, _ *mcp.CallToolRequest, in statementsIn) (*mcp.CallToolResult, statementsOut, error) {
 	out := statementsOut{Statements: []bomhort.VEXStatement{}}
 	for page := 1; ; page++ {
-		pg, err := s.Lister.VEXStatements(ctx, page, 100)
+		pg, err := s.Lister.ListVEXStatements(ctx, &bomhort.ListOptions{Page: page, PageSize: 100})
 		if err != nil {
 			return nil, statementsOut{}, err
 		}

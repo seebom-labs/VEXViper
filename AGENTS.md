@@ -16,8 +16,9 @@ One Go binary, `vexviper`, with three subcommands:
 
 Pipeline per SBOM: `source.Load` (BOMHort findings + dependency tree + SBOM download) → filter (skip already-VEXed unless `--regenerate`/`--force`) → `pipeline.MaterializeRepo` → `evidence.Collect` → `llm.Provider.Assess` → `vexgen` guardrails + go-vex validation → write `<name>.vexviper.openvex.json` → optional `bomhort.Client.UploadVEX` → `pipeline.Wait` for ingestion.
 
+BOMHort client: [`github.com/seebom-labs/bomhort-go`](https://github.com/seebom-labs/bomhort-go) (imported as `bomhort`; extracted from the former `internal/bomhort`) – REST client for the whole api-gateway, retries on 429 (`Retry-After`), sliding-window `RateLimiter` (`bomhort.rate_limit`, default 90 / 10 s), typed `APIError`/`IsNotFound`, `AllSBOMs(ctx, opts)`, `ListVEXStatements`/`AllVEXStatements`, `UploadVEX(ctx, name, doc, sbomID)`. VEXViper sets `WithUserAgent("vexviper")`. `bomhort-go/bomhorttest` is the in-memory fake gateway (BOMHort ≥ 0.7 scoping/matching semantics) for tests. Client changes go upstream to bomhort-go, not into a VEXViper fork of it.
+
 Packages (`internal/`):
-- `bomhort` – REST client for the BOMHort api-gateway (`/api/v1/sboms`, `/vulnerabilities`, `/dependencies`, `/download`, `/vex/statements`, `/sboms/upload`), retries on 429, `APIError`. `bomhorttest` is an in-memory fake gateway that mimics VEX ingestion for tests/E2E.
 - `config` – YAML config + `VEXVIPER_*` env overrides + validation. Providers: `heuristic|openai|github|copilot|mcptool`. Per-SBOM repo pinning via `repo.sboms[]{match, repo}`.
 - `source` – Loads findings for one SBOM, dedupes BOMHort's duplicate rows by `(vuln_id, purl)`, marks direct dependencies, derives repo hints from the SBOM.
 - `sbom` – Minimal SPDX/CycloneDX reader (only what is needed for repo hints and package names; BOMHort already parsed the SBOM).
@@ -27,7 +28,6 @@ Packages (`internal/`):
 - `osv` – OSV API client (single lookups with backoff).
 - `llm` – `Provider` interface, `Request`/`Assessment` types mirroring OpenVEX fields, JSON schema for structured output, `Usage` accounting (calls, tokens, Copilot premium requests, model, cache hits), providers: `Heuristic`, `OpenAI` (also GitHub Models via `ProviderName: github`, parses `usage`), `CopilotCLI` (runs `copilot -p … -s --output-format json --no-ask-user --deny-tool=shell/write/edit`, parses the JSONL events for answer + usage), `MCPTool`, `Mock` for tests.
 - `pipeline/metrics.go` – hand-rolled Prometheus text exposition (`/metrics`, `/healthz`); `pipeline/watch.go` – fingerprint-driven poller with worker pool (`watch.concurrency`), per-pass budget reset and state file.
-- `bomhort/ratelimit.go` – sliding-window client pacing (`bomhort.rate_limit`, default 90 / 10 s) applied inside `Client.do` before every request.
 - `llm/budget.go` – `Budget` spend meter (`llm.budget.*`); when exhausted the pipeline *defers* findings (no statement, SBOM not marked processed) instead of emitting cheap verdicts.
 - `assesscache` – file-backed verdict cache keyed by provider+model · product commit (or repo@ref) · vuln_id · purl · evidence fingerprint · prompt `Version`. Makes thousands of SBOMs affordable; bump `Version` when the prompt/schema changes.
 - `vexgen` – Builds and validates the OpenVEX document with `github.com/openvex/go-vex`; applies **guardrails**.
@@ -38,7 +38,7 @@ Other locations: `cmd/vexviper` (CLI, flags, summary), `test/integration` (`-tag
 
 # Tech Stack
 - **Language:** Go (`go.mod` `go 1.25.x`; Dockerfile base Go 1.26). Module path `github.com/seebom-labs/vexviper`.
-- **Direct dependencies (keep minimal):** `openvex/go-vex`, `modelcontextprotocol/go-sdk`, `package-url/packageurl-go`, `golang.org/x/mod`, `gopkg.in/yaml.v3`. Everything else is stdlib (`net/http`, `log/slog`, `encoding/json`, `os/exec`).
+- **Direct dependencies (keep minimal):** `seebom-labs/bomhort-go`, `openvex/go-vex`, `modelcontextprotocol/go-sdk`, `package-url/packageurl-go`, `golang.org/x/mod`, `gopkg.in/yaml.v3`. Everything else is stdlib (`net/http`, `log/slog`, `encoding/json`, `os/exec`).
 - **External tools at runtime (optional):** `git`, `go` + `govulncheck`, `copilot` CLI.
 - **Deployment:** Container image + Helm chart; Kubernetes CronJob (`watch --once`) is the default mode.
 

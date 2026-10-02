@@ -417,7 +417,8 @@ make e2e           # full BOMHort round trip, see below
 ```
 
 Tests use only the standard library `testing` package plus `httptest`, in-memory MCP
-transports and the reusable fake BOMHort in `internal/bomhort/bomhorttest`. Fixtures under
+transports and the reusable fake BOMHort `bomhorttest` from
+[bomhort-go](https://github.com/seebom-labs/bomhort-go). Fixtures under
 `testdata/` include BOMHort's release SBOM and recorded OSV responses — unit tests need no
 network.
 
@@ -449,7 +450,6 @@ when VEXViper starts relying on newer BOMHort API behaviour.
 
 ```
 cmd/vexviper/          CLI (generate | watch | mcp-serve | version)
-internal/bomhort/      REST client (429 back-off, sliding-window rate limiter) + bomhorttest fake server
 internal/sbom/         minimal SPDX/CycloneDX reader — only for repository hints
 internal/repo/         PURL/VCS → repository resolution, shallow git clone cache
 internal/evidence/     version compare, dependency depth, govulncheck (multi-module), symbol grep, non-Go manifest/import scan
