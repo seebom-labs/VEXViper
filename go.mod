@@ -1,12 +1,12 @@
 module github.com/seebom-labs/vexviper
 
-go 1.25.9
+go 1.26.0
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openvex/go-vex v0.2.9
 	github.com/seebom-labs/bomhort-go v0.0.0-20261002102715-03eddd7a2a3d
-	golang.org/x/mod v0.28.0
+	golang.org/x/mod v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
