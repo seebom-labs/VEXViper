@@ -165,7 +165,7 @@ func TestRunWritesDocumentAndUploads(t *testing.T) {
 	for _, s := range doc.Statements {
 		byVuln[string(s.Vulnerability.Name)] = s
 	}
-	if s := byVuln["GO-2025-0001"]; s.Status != vex.StatusAffected || s.Products[0].ID != "pkg:golang/golang.org/x/net@v0.30.0" {
+	if s := byVuln["GO-2025-0001"]; s.Status != vex.StatusAffected || vexgen.StatementPURL(s) != "pkg:golang/golang.org/x/net@v0.30.0" || s.Products[0].ID != bh.sbom.ID {
 		t.Errorf("GO-2025-0001 = %+v", s)
 	}
 	// not_affected without strong evidence must be downgraded by the guardrail.

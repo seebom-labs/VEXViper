@@ -19,6 +19,7 @@ import (
 	"github.com/seebom-labs/vexviper/internal/evidence"
 	"github.com/seebom-labs/vexviper/internal/llm"
 	"github.com/seebom-labs/vexviper/internal/pipeline"
+	"github.com/seebom-labs/vexviper/internal/vexgen"
 )
 
 type fakeBOMHort struct {
@@ -56,7 +57,7 @@ func (f *fakeBOMHort) UploadVEX(_ context.Context, name string, doc []byte, sbom
 		return bomhort.UploadResult{}, err
 	}
 	for _, s := range d.Statements {
-		f.statements = append(f.statements, bomhort.VEXStatement{DocumentID: d.ID, VulnID: string(s.Vulnerability.Name), ProductPURL: s.Products[0].ID, Status: string(s.Status)})
+		f.statements = append(f.statements, bomhort.VEXStatement{DocumentID: d.ID, VulnID: string(s.Vulnerability.Name), ProductPURL: vexgen.StatementPURL(s), Status: string(s.Status)})
 	}
 	return bomhort.UploadResult{Status: "pending", JobID: "j1", SHA256Hash: "abc"}, nil
 }

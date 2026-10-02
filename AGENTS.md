@@ -43,7 +43,7 @@ Other locations: `cmd/vexviper` (CLI, flags, summary), `test/integration` (`-tag
 - **Deployment:** Container image + Helm chart; Kubernetes CronJob (`watch --once`) is the default mode.
 
 # Architectural Directives
-**BOMHort matching contract:** BOMHort applies a statement when `statement.vuln_id == finding.vuln_id` **and** `statement.product_purl == finding.purl` (string equality). Always emit `vulnerability.name`, `products[0].@id` and `products[0].identifiers.purl` exactly as BOMHort returned them. Never normalise, re-encode or re-qualify PURLs or vuln ids.
+**BOMHort matching contract:** BOMHort applies a statement when `statement.vuln_id == finding.vuln_id` **and** `statement.product_purl == finding.purl` (string equality). Statements use the spec shape: `products[0].@id` = the BOMHort SBOM ID, `products[0].subcomponents[0].@id` + `.identifiers.purl` = the finding purl (a product without subcomponents is product-wide `*` in BOMHort ≥ 0.7 and would leak one verdict onto every package with the same vuln id). Always emit `vulnerability.name` and the subcomponent purl exactly as BOMHort returned them; read them back with `vexgen.StatementPURL`. Never normalise, re-encode or re-qualify PURLs or vuln ids.
 
 **Deterministic evidence first, LLM second:** The provider only ever sees an `evidence.Report`. Guardrails in `vexgen` downgrade `not_affected`/`fixed` claims that are not backed by strong deterministic evidence (e.g. `govulncheck_not_reachable`) to `under_investigation`, preserving the original verdict in `status_notes`. Never weaken the guardrails to "make the LLM's answer stick".
 

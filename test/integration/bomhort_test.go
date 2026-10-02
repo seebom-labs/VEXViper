@@ -22,6 +22,7 @@ import (
 
 	"github.com/seebom-labs/vexviper/internal/config"
 	"github.com/seebom-labs/vexviper/internal/pipeline"
+	"github.com/seebom-labs/vexviper/internal/vexgen"
 )
 
 func env(t *testing.T, key string) string {
@@ -162,6 +163,30 @@ func TestGenerateUploadRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Spec shape: BOMHort must store one statement per package (subcomponent
+	// purl), scoped to this SBOM — never product-wide "*".
+	scoped, err := c.SBOMVEXStatements(ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ours := map[string]bool{}
+	for _, st := range doc.Statements {
+		ours[string(st.Vulnerability.Name)+"|"+vexgen.StatementPURL(st)] = true
+	}
+	stored := 0
+	for _, st := range scoped {
+		if st.DocumentID != doc.ID {
+			continue
+		}
+		stored++
+		if !ours[st.VulnID+"|"+st.ProductPURL] {
+			t.Errorf("BOMHort stored %s for product_purl %q (want a per-package purl from the document)", st.VulnID, st.ProductPURL)
+		}
+	}
+	if stored != len(doc.Statements) {
+		t.Errorf("BOMHort scoped %d statements of document to SBOM %s, want %d", stored, s.ID, len(doc.Statements))
+	}
+
 	// vex_status must now be visible on the vulnerabilities (exact vuln_id+purl match).
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
@@ -171,7 +196,7 @@ func TestGenerateUploadRoundTrip(t *testing.T) {
 		}
 		want := map[string]vex.Status{}
 		for _, st := range doc.Statements {
-			want[string(st.Vulnerability.Name)+"|"+st.Products[0].ID] = st.Status
+			want[string(st.Vulnerability.Name)+"|"+vexgen.StatementPURL(st)] = st.Status
 		}
 		matched, mismatched := 0, 0
 		for _, v := range vulns {

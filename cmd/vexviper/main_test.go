@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -293,5 +294,59 @@ func TestWatchListenServesMetrics(t *testing.T) {
 		t.Fatalf("port still bound: %v", err)
 	} else {
 		ln.Close()
+	}
+}
+
+// Two packages share a vulnerability ID but get different verdicts. With the
+// spec shape (product = SBOM, subcomponent = purl) each verdict applies to its
+// own package only — scoped via ?sbom_id= and, unscoped, via the product @id.
+func TestVerdictsStayPerPackage(t *testing.T) {
+	const (
+		oldNet = "pkg:golang/golang.org/x/net@v0.30.0"
+		newNet = "pkg:golang/golang.org/x/net@v0.31.0"
+	)
+	newServer := func() *bomhorttest.Server {
+		srv := bomhorttest.New("secret")
+		t.Cleanup(srv.Close)
+		srv.AddSBOM(bomhort.SBOM{ID: sbomID, DocumentName: ".", SourceFile: "bomhort-0.6.1.spdx.json"},
+			[]bomhort.Vulnerability{
+				{VulnID: "GO-2025-0001", Severity: "HIGH", PURL: oldNet, FixedVersion: "v0.31.0"},
+				{VulnID: "GO-2025-0001", Severity: "HIGH", PURL: newNet, FixedVersion: "v0.31.0"},
+			}, nil, nil)
+		return srv
+	}
+	statuses := func(srv *bomhorttest.Server) map[string]string {
+		vulns, err := bomhort.New(srv.URL, bomhort.WithAPIKey("secret")).Vulnerabilities(context.Background(), sbomID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]string{}
+		for _, v := range vulns {
+			got[v.PURL] = v.VEXStatus
+		}
+		return got
+	}
+	want := map[string]string{oldNet: "under_investigation", newNet: "fixed"}
+
+	srv := newServer()
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"generate", "--config", writeConfig(t, srv, out), "--sbom", sbomID, "--upload", "--wait", "5s", "--log-level", "error"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	if got := statuses(srv); !maps.Equal(got, want) {
+		t.Fatalf("scoped upload: statuses = %v, want %v", got, want)
+	}
+
+	doc, err := os.ReadFile(filepath.Join(out, "bomhort-0.6.1.vexviper.openvex.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv = newServer()
+	if _, err := bomhort.New(srv.URL, bomhort.WithAPIKey("secret")).UploadVEX(context.Background(), "x.openvex.json", doc, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses(srv); !maps.Equal(got, want) {
+		t.Fatalf("unscoped upload: statuses = %v, want %v", got, want)
 	}
 }

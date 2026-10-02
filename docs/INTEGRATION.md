@@ -39,9 +39,22 @@ statement VEXViper emits:
 
 * uses `vulnerability.name = finding.vuln_id` (exactly as BOMHort returned it, e.g. `GO-2025-…`
   or `GHSA-…`, whatever BOMHort chose as primary id);
-* uses `products[0].@id = finding.purl` **and** `products[0].identifiers.purl = finding.purl`
-  (BOMHort reads `identifiers.purl` first, then `@id`);
+* uses the OpenVEX spec shape with exactly one product and one subcomponent:
+  `products[0].@id = <BOMHort sbom_id>` (the product is the SBOM) and
+  `products[0].subcomponents[0].@id = products[0].subcomponents[0].identifiers.purl = finding.purl`
+  (BOMHort reads `identifiers.purl` first, then `@id`; the subcomponent purl is what it matches);
 * never normalises, re-encodes or re-qualifies the PURL.
+
+The subcomponent matters: BOMHort ≥ 0.7 treats a product **without** subcomponents as
+product-wide (`product_purl = "*"`) once it is scoped, i.e. the verdict would cover every
+package in the SBOM with that vulnerability ID and the newest statement would win for all of
+them — a `fixed` for `x/net@v0.31.0` would hide the still-vulnerable `x/net@v0.30.0`.
+Earlier VEXViper versions emitted `products[0].@id = finding.purl` without subcomponents and
+are affected by this; re-run `generate --force --upload` once per affected SBOM so
+every finding gets a newer, per-package statement that outranks the old product-wide ones.
+The product `@id` is the SBOM UUID rather than the document name or repository because only
+the UUID resolves to exactly one SBOM when a document is uploaded **without** `?sbom_id=`
+(e.g. `upload_vex` with a path, or a document published via GitOps and ingested later).
 
 Since BOMHort #350 a statement is additionally **scoped to one SBOM**: VEXViper always
 uploads with `?sbom_id=<sbom uuid>` so its verdicts (reachability claims about *one*

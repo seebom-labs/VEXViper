@@ -42,9 +42,11 @@ agent) can drive or review the triage interactively.
 `source_repo`). Older gateways accept uploads but ignore the scoping parameter.
 
 `examples/bomhort-0.6.1.openvex.json` was generated end-to-end against a real BOMHort
-instance from BOMHort's own release SBOM: 9 findings → 9 statements → BOMHort applied all
-9 (`6× not_affected` backed by govulncheck, `3× under_investigation` for npm components
-where no reachability evidence exists). See [E2E](#end-to-end-test-against-bomhort).
+instance from BOMHort's own release SBOM: 10 findings → 10 statements → BOMHort applied all
+10 (`6× not_affected` backed by govulncheck, `4× under_investigation` for npm components
+where no reachability evidence exists). Each statement names the SBOM as product and the
+finding's package as subcomponent, so verdicts stay per package (`GHSA-hh8m-fm6v-7cvg` hits
+both `@angular/core` and `@angular/compiler`). See [E2E](#end-to-end-test-against-bomhort).
 
 ## Why a sidecar over REST (and not an in-tree plugin)
 
@@ -52,7 +54,7 @@ where no reachability evidence exists). See [E2E](#end-to-end-test-against-bomho
 |---|---|
 | No plugin API (no Go plugins, gRPC hooks, webhooks, MCP) — the REST API is the only extension surface | VEXViper is an out-of-tree Go module talking to `/api/v1` |
 | Contribution policy: stdlib-only, "ask first" for new dependencies, no frameworks | go-vex + MCP SDK cannot go into the core module |
-| VEX ↔ vulnerability join is exact string equality on `(vuln_id, product_purl)` | statements copy the API's `purl`/`vuln_id`, product `@id` = PURL |
+| VEX ↔ vulnerability join is exact string equality on `(vuln_id, product_purl)` | statements copy the API's `purl`/`vuln_id`; product `@id` = BOMHort SBOM ID, subcomponent = the finding's PURL |
 | Upload needs `AUTH_ENABLED=true`, `X-API-Key`, `X-Filename: *.openvex.json`, writable `SBOM_DIR/pushed/` | `--upload` is opt-in; default is a draft file |
 | Issue [#255](https://github.com/seebom-labs/BOMHort/issues/255) plans a companion-OpenVEX export | VEXViper's output is exactly that overlay, generated instead of hand-written |
 

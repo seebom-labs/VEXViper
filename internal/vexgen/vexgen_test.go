@@ -94,8 +94,12 @@ func TestBuildGolden(t *testing.T) {
 				Aliases []string `json:"aliases"`
 			} `json:"vulnerability"`
 			Products []struct {
-				ID          string            `json:"@id"`
-				Identifiers map[string]string `json:"identifiers"`
+				ID            string            `json:"@id"`
+				Identifiers   map[string]string `json:"identifiers"`
+				Subcomponents []struct {
+					ID          string            `json:"@id"`
+					Identifiers map[string]string `json:"identifiers"`
+				} `json:"subcomponents"`
 			} `json:"products"`
 			Status string `json:"status"`
 		} `json:"statements"`
@@ -110,9 +114,19 @@ func TestBuildGolden(t *testing.T) {
 		t.Fatalf("statements not sorted by vuln id: %+v", parsed.Statements)
 	}
 	for _, s := range parsed.Statements {
+		// Product = the SBOM (no purl identifier: BOMHort would resolve that
+		// instead of the @id), exactly one subcomponent = the finding purl.
+		if len(s.Products) != 1 {
+			t.Fatalf("products = %+v", s.Products)
+		}
 		p := s.Products[0]
-		if p.ID != p.Identifiers["purl"] || !strings.HasPrefix(p.ID, "pkg:") {
-			t.Errorf("product id/purl mismatch: %+v", p)
+		if p.ID != "sbom-123" || p.Identifiers != nil || len(p.Subcomponents) != 1 {
+			t.Errorf("product = %+v, want @id sbom-123 with one subcomponent", p)
+			continue
+		}
+		sc := p.Subcomponents[0]
+		if sc.ID != sc.Identifiers["purl"] || !strings.HasPrefix(sc.ID, "pkg:") {
+			t.Errorf("subcomponent id/purl mismatch: %+v", sc)
 		}
 	}
 	if a := parsed.Statements[3].Vulnerability.Aliases; len(a) != 1 || a[0] != "CVE-2023-39325" {
@@ -193,5 +207,28 @@ func TestSanitize(t *testing.T) {
 	}
 	if fmtConf(0.5) != "0.5" || fmtConf(1) != "1" || fmtConf(0.85) != "0.85" || fmtConf(0) != "0" {
 		t.Fatal("fmtConf")
+	}
+}
+
+func TestBuildRequiresProductID(t *testing.T) {
+	if _, err := Build("", nil, Options{Now: fixedTime}); err == nil {
+		t.Fatal("Build with empty product id succeeded")
+	}
+}
+
+func TestStatementPURL(t *testing.T) {
+	const purl = "pkg:npm/a@1"
+	spec := vex.Statement{Products: []vex.Product{{
+		Component:     vex.Component{ID: "sbom-1"},
+		Subcomponents: []vex.Subcomponent{{Component: vex.Component{ID: purl}}},
+	}}}
+	legacy := vex.Statement{Products: []vex.Product{{Component: vex.Component{ID: "x", Identifiers: map[vex.IdentifierType]string{vex.PURL: purl}}}}}
+	for name, s := range map[string]vex.Statement{"spec": spec, "legacy": legacy} {
+		if got := StatementPURL(s); got != purl {
+			t.Errorf("%s: StatementPURL = %q", name, got)
+		}
+	}
+	if got := StatementPURL(vex.Statement{}); got != "" {
+		t.Errorf("empty: %q", got)
 	}
 }

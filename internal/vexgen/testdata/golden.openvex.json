@@ -1,6 +1,6 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://vex.example.com/docs/public/vex-af93b0a723ab926d43938eaca7f34829ae942e746893aa9f1c1d277adaf5575a-sbom-123",
+  "@id": "https://vex.example.com/docs/public/vex-bfe81090111da477dc4b57634860270fbd9441e84c94e33b4df564e183912b91-sbom-123",
   "author": "ACME Security",
   "role": "automated triage",
   "version": 1,
@@ -15,10 +15,15 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/github.com/foo/bar@v1.0.0",
-          "identifiers": {
-            "purl": "pkg:golang/github.com/foo/bar@v1.0.0"
-          }
+          "@id": "sbom-123",
+          "subcomponents": [
+            {
+              "@id": "pkg:golang/github.com/foo/bar@v1.0.0",
+              "identifiers": {
+                "purl": "pkg:golang/github.com/foo/bar@v1.0.0"
+              }
+            }
+          ]
         }
       ],
       "status": "affected",
@@ -35,10 +40,15 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/github.com/foo/baz@v1.0.0",
-          "identifiers": {
-            "purl": "pkg:golang/github.com/foo/baz@v1.0.0"
-          }
+          "@id": "sbom-123",
+          "subcomponents": [
+            {
+              "@id": "pkg:golang/github.com/foo/baz@v1.0.0",
+              "identifiers": {
+                "purl": "pkg:golang/github.com/foo/baz@v1.0.0"
+              }
+            }
+          ]
         }
       ],
       "status": "under_investigation",
@@ -53,10 +63,15 @@
       },
       "products": [
         {
-          "@id": "pkg:npm/%40angular/cdk@22.0.6",
-          "identifiers": {
-            "purl": "pkg:npm/%40angular/cdk@22.0.6"
-          }
+          "@id": "sbom-123",
+          "subcomponents": [
+            {
+              "@id": "pkg:npm/%40angular/cdk@22.0.6",
+              "identifiers": {
+                "purl": "pkg:npm/%40angular/cdk@22.0.6"
+              }
+            }
+          ]
         }
       ],
       "status": "fixed",
@@ -74,10 +89,15 @@
       },
       "products": [
         {
-          "@id": "pkg:golang/golang.org/x/net@v0.16.0",
-          "identifiers": {
-            "purl": "pkg:golang/golang.org/x/net@v0.16.0"
-          }
+          "@id": "sbom-123",
+          "subcomponents": [
+            {
+              "@id": "pkg:golang/golang.org/x/net@v0.16.0",
+              "identifiers": {
+                "purl": "pkg:golang/golang.org/x/net@v0.16.0"
+              }
+            }
+          ]
         }
       ],
       "status": "not_affected",

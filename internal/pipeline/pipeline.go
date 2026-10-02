@@ -427,7 +427,7 @@ func (p *Pipeline) run(ctx context.Context, opts RunOptions) (*Outcome, error) {
 	}
 	out.Counts, out.Guardrails = built.Counts, built.Guardrails
 	for _, s := range built.Document.Statements {
-		rec := AssessmentRecord{VulnID: string(s.Vulnerability.Name), PURL: s.Products[0].ID, Status: s.Status, Reasoning: s.StatusNotes}
+		rec := AssessmentRecord{VulnID: string(s.Vulnerability.Name), PURL: vexgen.StatementPURL(s), Status: s.Status, Reasoning: s.StatusNotes}
 		if r := records[statementKey(rec.VulnID, rec.PURL)]; r != nil {
 			rec.Confidence, rec.Provider, rec.Cached, rec.Usage = r.Confidence, r.Provider, r.Cached, r.Usage
 		}

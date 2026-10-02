@@ -53,14 +53,22 @@ type Result struct {
 	Counts map[vex.Status]int
 }
 
-// Build assembles the document. Entries with invalid assessments (after
-// guardrails) are downgraded rather than dropped so every finding gets a
-// statement.
 // buildMu serializes Build: go-vex keeps the namespace in the package-level
 // vex.DefaultNamespace, which GenerateCanonicalID reads.
 var buildMu sync.Mutex
 
+// Build assembles the document. Entries with invalid assessments (after
+// guardrails) are downgraded rather than dropped so every finding gets a
+// statement.
+//
+// productID is the BOMHort SBOM ID. It becomes every statement's product
+// @id, which BOMHort resolves to exactly that SBOM even when the document
+// is uploaded without ?sbom_id= (document names and repositories are not
+// unique across SBOMs).
 func Build(productID string, entries []Entry, opts Options) (*Result, error) {
+	if productID == "" {
+		return nil, fmt.Errorf("vexgen: product id (BOMHort SBOM ID) is required")
+	}
 	buildMu.Lock()
 	defer buildMu.Unlock()
 	now := time.Now().UTC()
@@ -114,10 +122,17 @@ func Build(productID string, entries []Entry, opts Options) (*Result, error) {
 			// BOMHort resolves the ID from name → @id → aliases[0]; keep the
 			// exact BOMHort vuln_id in Name so the join matches.
 			Vulnerability: vex.Vulnerability{Name: vex.VulnerabilityID(f.VulnID), Description: f.Summary},
-			Products: []vex.Product{{Component: vex.Component{
-				ID:          f.PURL,
-				Identifiers: map[vex.IdentifierType]string{vex.PURL: f.PURL},
-			}}},
+			// Spec shape: product = the SBOM, subcomponent = the finding's
+			// package. BOMHort matches the subcomponent purl; a product
+			// without subcomponents would be product-wide ("*") and cover
+			// every package in the SBOM with this vulnerability ID.
+			Products: []vex.Product{{
+				Component: vex.Component{ID: productID},
+				Subcomponents: []vex.Subcomponent{{Component: vex.Component{
+					ID:          f.PURL,
+					Identifiers: map[vex.IdentifierType]string{vex.PURL: f.PURL},
+				}}},
+			}},
 			Status:          a.Status,
 			StatusNotes:     statusNotes(a, e.Report),
 			Justification:   a.Justification,
@@ -226,4 +241,21 @@ func Marshal(doc *vex.VEX) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// StatementPURL returns the package purl a statement is about: the first
+// subcomponent's purl (spec shape), or the product's for documents written
+// in the older component shape.
+func StatementPURL(s vex.Statement) string {
+	if len(s.Products) == 0 {
+		return ""
+	}
+	c := s.Products[0].Component
+	if len(s.Products[0].Subcomponents) > 0 {
+		c = s.Products[0].Subcomponents[0].Component
+	}
+	if p := c.Identifiers[vex.PURL]; p != "" {
+		return p
+	}
+	return c.ID
 }
