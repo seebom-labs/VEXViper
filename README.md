@@ -172,9 +172,13 @@ client IP, so the client paces itself with `bomhort.rate_limit: 90` per `bomhort
 
 ## Install
 
-Every tag `vX.Y.Z` publishes binaries (linux/darwin, amd64/arm64, SPDX SBOM, checksums) on the
-[releases page](https://github.com/seebom-labs/VEXViper/releases), a multi-arch, cosign-signed
-image and the Helm chart as OCI artifact; `main` is available as `:main`.
+Every release tag is cut from a `release/vX.Y` branch. Tags `vX.Y.Z` and
+pre-releases such as `vX.Y.Z-rc.N` publish binaries (linux/darwin, amd64/arm64, SPDX SBOM,
+checksums) on the [releases page](https://github.com/seebom-labs/VEXViper/releases), a
+multi-arch, cosign-signed image and the Helm chart as OCI artifact. Final releases also move
+the stable `X.Y` and `latest` image tags; RCs only publish their exact version. `main` is
+available as `:main`. See [docs/RELEASING.md](docs/RELEASING.md) for branch cuts, RCs,
+backports and patch releases.
 
 ```sh
 # container (ships git + Go toolchain + govulncheck)
@@ -187,6 +191,9 @@ cosign verify ghcr.io/seebom-labs/vexviper:latest \
 # Helm (CronJob by default; mode=deployment adds /metrics + probes, mode=mcp a Service)
 helm install vexviper oci://ghcr.io/seebom-labs/charts/vexviper --version 0.1.0 \
   --set bomhort.url=http://bomhort-api-gateway:8080 --set mode=cronjob
+
+# explicit RC install (RCs never move latest or the stable X.Y image tag)
+helm install vexviper oci://ghcr.io/seebom-labs/charts/vexviper --version 0.8.0-rc.1
 
 # from source
 go install github.com/seebom-labs/vexviper/cmd/vexviper@latest   # or: make build → bin/vexviper
@@ -440,10 +447,11 @@ them from `$BOMHORT_SRC/backend/Dockerfile`, `--keep` to leave the stack up. The
 `ghcr.io/seebom-labs/bomhort/*:0.6.1` images predate the upload endpoint; use
 `BOMHORT_IMAGE_PREFIX=ghcr.io/seebom-labs/bomhort/ BOMHORT_IMAGE_TAG=0.7.1` or build from source.
 
-**CI:** `.github/workflows/e2e.yml` runs the same script on every PR against a pinned
-BOMHort commit (`BOMHORT_PINNED_REF`) and weekly against BOMHort `main`; the generated
-document, compose logs and integration-test output are uploaded as artifacts. Bump the pin
-when VEXViper starts relying on newer BOMHort API behaviour.
+**CI:** `.github/workflows/e2e.yml` runs the same script on every PR (including backports to
+`release/**`) against a pinned BOMHort commit (`BOMHORT_PINNED_REF`) and weekly against
+BOMHort `main`; the generated document, compose logs and integration-test output are
+uploaded as artifacts. On a release branch, keep the pin at the BOMHort ref that minor was
+tested against unless the patch deliberately depends on newer BOMHort API behaviour.
 
 ## Layout
 

@@ -6,8 +6,9 @@ name: E2E (BOMHort)
 # weekly schedule also runs against upstream `main` to catch API drift early.
 on:
   pull_request:
+    branches: [main, 'release/**']
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:

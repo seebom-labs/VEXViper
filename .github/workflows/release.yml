@@ -1,16 +1,140 @@
 name: Release
+
+# One pipeline for final releases, release candidates and the moving main image.
+# Tags are accepted only from their release branch (release/vX.Y). Manual runs
+# publish installable pre-releases from the selected branch and create the tag at
+# the commit that was built.
+
 on:
   push:
-    tags: ["v*"]
-    branches: [main]
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Pre-release version, e.g. 0.8.0-rc.1 (final releases are cut by pushing a tag)'
+        required: true
+        type: string
+
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/vexviper
-  CHART_OCI: oci://ghcr.io/${{ github.repository_owner }}/charts
+  REGISTRY: ghcr.io
+
 jobs:
-  test:
+  prepare:
+    name: Validate version and branch
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      release: ${{ steps.resolve.outputs.release }}
+      minor: ${{ steps.resolve.outputs.minor }}
+      owner: ${{ steps.resolve.outputs.owner }}
+      image: ${{ steps.resolve.outputs.image }}
+      chart_oci: ${{ steps.resolve.outputs.chart_oci }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate version
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          OWNER=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          IMAGE="$REGISTRY/$OWNER/vexviper"
+          CHART_OCI="oci://$REGISTRY/$OWNER/charts"
+
+          if [ "$EVENT" = "push" ] && [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "::error::Only main branch pushes are published by this workflow."
+              exit 1
+            fi
+            {
+              echo "version=main"
+              echo "tag=main"
+              echo "prerelease=false"
+              echo "release=false"
+              echo "minor="
+              echo "owner=$OWNER"
+              echo "image=$IMAGE"
+              echo "chart_oci=$CHART_OCI"
+            } >> "$GITHUB_OUTPUT"
+            echo "### Publishing main image from \`$GITHUB_REF_NAME\` @ \`${GITHUB_SHA:0:7}\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            VERSION="${INPUT_VERSION#v}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+
+          # X.Y.Z or X.Y.Z-(rc|alpha|beta).N. Dot-separated numeric prerelease
+          # identifiers make rc.10 sort after rc.9 in SemVer and Helm.
+          if ! printf '%s' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(rc|alpha|beta)\.[1-9][0-9]*)?$'; then
+            echo "::error::'$VERSION' is not a release version. Expected X.Y.Z or X.Y.Z-rc.N (also -alpha.N / -beta.N)."
+            exit 1
+          fi
+
+          PRERELEASE=false
+          case "$VERSION" in *-*) PRERELEASE=true ;; esac
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$PRERELEASE" != "true" ]; then
+              echo "::error::Manual runs publish pre-releases only. Cut a final release by pushing the tag: make release VERSION=$VERSION"
+              exit 1
+            fi
+            if git rev-parse --verify --quiet "refs/tags/v$VERSION" >/dev/null; then
+              echo "::error::Tag v$VERSION already exists. Pick the next RC number."
+              exit 1
+            fi
+          else
+            BASE="${VERSION%%-*}"
+            MINOR="${BASE%.*}"
+            BRANCH="release/v$MINOR"
+            COMMIT=$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")
+            if ! git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
+              echo "::error::$BRANCH does not exist. Tags are cut from release branches — use make release-rc / make release (hack/cut-release.sh), which creates the branch."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$COMMIT" "refs/remotes/origin/$BRANCH"; then
+              echo "::error::$GITHUB_REF_NAME ($COMMIT) is not on $BRANCH. Delete the tag, backport the change (make cherry-pick) and tag the release branch."
+              exit 1
+            fi
+          fi
+
+          BASE="${VERSION%%-*}"
+          MINOR="${BASE%.*}"
+          {
+            echo "version=$VERSION"
+            echo "tag=v$VERSION"
+            echo "prerelease=$PRERELEASE"
+            echo "release=true"
+            echo "minor=$MINOR"
+            echo "owner=$OWNER"
+            echo "image=$IMAGE"
+            echo "chart_oci=$CHART_OCI"
+          } >> "$GITHUB_OUTPUT"
+          echo "### Releasing v$VERSION (pre-release: $PRERELEASE) from \`$GITHUB_REF_NAME\` @ \`${GITHUB_SHA:0:7}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: prepare
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -19,12 +143,13 @@ jobs:
       - run: make lint test-race
 
   image:
-    needs: test
+    name: Build and push image
+    needs: [prepare, test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write   # cosign keyless
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -33,19 +158,21 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ needs.prepare.outputs.image }}
+          # latest is controlled explicitly below (finals only), never by the action.
+          flavor: latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha
+            type=raw,value=main,enable=${{ needs.prepare.outputs.release != 'true' }}
+            type=raw,value=${{ needs.prepare.outputs.version }},enable=${{ needs.prepare.outputs.release == 'true' }}
+            type=raw,value=${{ needs.prepare.outputs.minor }},enable=${{ needs.prepare.outputs.release == 'true' && needs.prepare.outputs.prerelease != 'true' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.release == 'true' && needs.prepare.outputs.prerelease != 'true' }}
+            type=sha,format=short
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -54,60 +181,148 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ needs.prepare.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - uses: sigstore/cosign-installer@v3
-      - run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - run: cosign sign --yes "${{ needs.prepare.outputs.image }}@${{ steps.build.outputs.digest }}"
 
   binaries:
-    needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Build release binaries
+    needs: [prepare, test]
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build
+      - name: Build binaries and checksums
         run: |
-          set -eu
+          set -euo pipefail
           mkdir -p dist
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os=${target%/*}; arch=${target#*/}
             CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-              -o "dist/vexviper_${GITHUB_REF_NAME}_${os}_${arch}" ./cmd/vexviper
+              -ldflags "-s -w -X main.version=${TAG}" \
+              -o "dist/vexviper_${TAG}_${os}_${arch}" ./cmd/vexviper
           done
-          (cd dist && sha256sum * > checksums.txt)
+          (cd dist && sha256sum vexviper_* > checksums.txt)
       - uses: anchore/sbom-action@v0
         with:
           path: .
           format: spdx-json
-          output-file: dist/vexviper_${{ github.ref_name }}.spdx.json
+          output-file: dist/vexviper_${{ env.TAG }}.spdx.json
           upload-artifact: false
-      - name: Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag dist/*
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign release assets
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --bundle "dist/checksums.txt.bundle" "dist/checksums.txt"
+          cosign sign-blob --yes --bundle "dist/vexviper_${TAG}.spdx.json.bundle" "dist/vexviper_${TAG}.spdx.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
 
   chart:
-    needs: image
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Package and push Helm chart
+    needs: [prepare, image]
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      CHART_OCI: ${{ needs.prepare.outputs.chart_oci }}
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/vexviper
       - name: Package and push
         run: |
-          set -eu
-          ver="${GITHUB_REF_NAME#v}"
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm package deploy/helm/vexviper --version "$ver" --app-version "$ver" -d dist
-          helm push "dist/vexviper-${ver}.tgz" "$CHART_OCI"
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          mkdir -p dist
+          helm package deploy/helm/vexviper --version "$VERSION" --app-version "$VERSION" -d dist
+          helm push "dist/vexviper-${VERSION}.tgz" "$CHART_OCI"
+
+  github-release:
+    name: Create GitHub release
+    needs: [prepare, binaries, chart]
+    if: needs.prepare.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      CHART_OCI: ${{ needs.prepare.outputs.chart_oci }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Write release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RC_NOTE: |
+            > [!WARNING]
+            > **Release candidate** for `v${{ needs.prepare.outputs.version }}` — for testing, not for production.
+            > The image is not tagged `latest` or with the stable minor tag, and Helm installs this chart only when asked for `--version ${{ needs.prepare.outputs.version }}` explicitly.
+        run: |
+          set -euo pipefail
+
+          BASE="v${VERSION%%-*}"
+          PREVIOUS=$( { git tag -l 'v*' | grep -Ev -- '-' | grep -vxF "$BASE" || true; echo "$BASE"; } \
+            | sort -V | grep -B1 -xF "$BASE" | head -n1)
+          [ "$PREVIOUS" = "$BASE" ] && PREVIOUS=""
+          echo "Release notes: ${PREVIOUS:-<first release>}..$TAG"
+
+          ARGS=(-f "tag_name=$TAG" -f "target_commitish=$GITHUB_SHA")
+          if [ -n "$PREVIOUS" ]; then ARGS+=(-f "previous_tag_name=$PREVIOUS"); fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${ARGS[@]}" --jq .body > generated-notes.md
+
+          {
+            if [ "$PRERELEASE" = "true" ]; then
+              printf '%s' "$RC_NOTE"
+              if [ "$EVENT" = "workflow_dispatch" ]; then
+                printf '> Built from branch `%s` at `%s`.\n' "$GITHUB_REF_NAME" "${GITHUB_SHA:0:7}"
+              fi
+              echo
+            fi
+            cat <<NOTES
+          ## Install
+
+          \`\`\`bash
+          helm install vexviper $CHART_OCI/vexviper --version $VERSION
+          docker pull $IMAGE:$VERSION
+          \`\`\`
+
+          Binaries, checksums and the SPDX SBOM are attached below. The image is signed with cosign keyless signing.
+
+          NOTES
+            cat generated-notes.md
+          } > release-notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          FLAGS=(--title "VEXViper $VERSION" --notes-file release-notes.md)
+          if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
+          gh release create "$TAG" "${FLAGS[@]}" --target "$GITHUB_SHA" dist/*

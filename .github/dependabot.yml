@@ -2,12 +2,15 @@ version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
+    target-branch: main
     schedule: { interval: weekly }
     groups:
       go-deps: { patterns: ["*"] }
   - package-ecosystem: github-actions
     directory: /
+    target-branch: main
     schedule: { interval: weekly }
   - package-ecosystem: docker
     directory: /
+    target-branch: main
     schedule: { interval: weekly }

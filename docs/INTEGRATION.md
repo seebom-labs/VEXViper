@@ -79,6 +79,16 @@ VEXViper still dedupes defensively by `(vuln_id, purl)` and falls back to paging
 
 Secrets: one Secret with `api-key` (BOMHort) and optionally `openai-api-key`.
 
+### Release branches and BOMHort compatibility
+
+VEXViper releases are cut from `release/vX.Y` branches with RC tags first; see
+[`docs/RELEASING.md`](RELEASING.md). The release workflow also runs E2E on pushes and PRs to
+`release/**`. Keep that branch's `.github/workflows/e2e.yml` `BOMHORT_PINNED_REF` at the
+BOMHort commit the minor was validated against; only advance it on the branch when a patch
+intentionally depends on newer BOMHort API behaviour. Dependabot targets `main` only, so
+security dependency updates for a supported release branch should be cherry-picked after
+they merge on `main`.
+
 ## 4. Safety posture
 
 * Default provider is **heuristic**; it can only produce `not_affected` on strong
