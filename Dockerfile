@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # VEXViper image. Includes git and a Go toolchain + govulncheck so the
 # sidecar can clone product repositories and run reachability analysis.
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 ARG VERSION=dev
 WORKDIR /src
 RUN apk add --no-cache git
@@ -14,7 +14,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 # Runtime keeps the Go toolchain: govulncheck needs `go` to load the product's
 # packages (GOTOOLCHAIN=auto downloads newer toolchains on demand).
-FROM golang:1.26-alpine
+FROM golang:1.27-alpine
 RUN apk add --no-cache git ca-certificates \
  && adduser -D -u 65532 vexviper \
  && mkdir -p /work /home/vexviper/go && chown -R vexviper /work /home/vexviper
