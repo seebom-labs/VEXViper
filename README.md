@@ -75,7 +75,7 @@ Recommendation: run the **CronJob** with the heuristic provider first (no keys, 
 ## Quick start
 
 ```sh
-make build                                   # → bin/vexviper (needs Go ≥ 1.25 (image uses 1.26), git; govulncheck optional)
+make build                                   # → bin/vexviper (needs Go ≥ 1.26 (image uses 1.27), git; govulncheck optional)
 
 # assess one SBOM already known to BOMHort, write ./bomhort-0.6.1.vexviper.openvex.json
 bin/vexviper generate --bomhort http://localhost:8080 --sbom bomhort-0.6.1

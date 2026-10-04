@@ -37,7 +37,7 @@ Packages (`internal/`):
 Other locations: `cmd/vexviper` (CLI, flags, summary), `test/integration` (`-tags=integration`, needs a live BOMHort), `hack/e2e-bomhort.sh` + `hack/docker-compose.e2e.yml` (isolated BOMHort stack on :18080, key `vexviper-e2e-key`; `BOMHORT_BUILD=1` builds BOMHort from source, `.github/workflows/e2e.yml` runs it on PRs against `BOMHORT_PINNED_REF` and weekly against BOMHort `main`), `deploy/helm/vexviper` (CronJob or Deployment), `docs/INTEGRATION.md` (API contract, deployment, safety posture, upstream findings), `examples/` (config, MCP client config, generated VEX for BOMHort 0.6.1).
 
 # Tech Stack
-- **Language:** Go (`go.mod` `go 1.25.x`; Dockerfile base Go 1.26). Module path `github.com/seebom-labs/vexviper`.
+- **Language:** Go (`go.mod` `go 1.26.0`; Dockerfile base Go 1.27). Module path `github.com/seebom-labs/vexviper`.
 - **Direct dependencies (keep minimal):** `seebom-labs/bomhort-go`, `openvex/go-vex`, `modelcontextprotocol/go-sdk`, `package-url/packageurl-go`, `golang.org/x/mod`, `gopkg.in/yaml.v3`. Everything else is stdlib (`net/http`, `log/slog`, `encoding/json`, `os/exec`).
 - **External tools at runtime (optional):** `git`, `go` + `govulncheck`, `copilot` CLI.
 - **Deployment:** Container image + Helm chart; Kubernetes CronJob (`watch --once`) is the default mode.
