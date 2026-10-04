@@ -416,7 +416,9 @@ func TestReleaseWorkflowContract(t *testing.T) {
 	mustContain(t, text, "grep -Ev -- '-'")
 	mustContain(t, text, "previous_tag_name=$PREVIOUS")
 	mustContain(t, text, "FLAGS+=(--prerelease)")
-	mustContain(t, text, "uses: docker/metadata-action@v5")
+	if !regexp.MustCompile(`uses: docker/metadata-action@v\d+\n`).MatchString(text) {
+		t.Fatal("release workflow must derive image tags and labels with docker/metadata-action")
+	}
 	mustContain(t, text, "labels: ${{ steps.meta.outputs.labels }}")
 	mustContain(t, text, "flavor: latest=false")
 	mustContain(t, text, "type=sha,format=short")
