@@ -226,7 +226,7 @@ jobs:
           set -euo pipefail
           cosign sign-blob --yes --bundle "dist/checksums.txt.bundle" "dist/checksums.txt"
           cosign sign-blob --yes --bundle "dist/vexviper_${TAG}.spdx.json.bundle" "dist/vexviper_${TAG}.spdx.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-assets
           path: dist/*
