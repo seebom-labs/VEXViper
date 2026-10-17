@@ -174,7 +174,7 @@ jobs:
             type=raw,value=latest,enable=${{ needs.prepare.outputs.release == 'true' && needs.prepare.outputs.prerelease != 'true' }}
             type=sha,format=short
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
