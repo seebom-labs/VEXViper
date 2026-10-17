@@ -199,7 +199,7 @@ cosign verify ghcr.io/seebom-labs/vexviper:latest \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # Helm (CronJob by default; mode=deployment adds /metrics + probes, mode=mcp a Service)
-helm install vexviper oci://ghcr.io/seebom-labs/charts/vexviper --version 0.1.0 \
+helm install vexviper oci://ghcr.io/seebom-labs/charts/vexviper --version 0.8.0 \
   --set bomhort.url=http://bomhort-api-gateway:8080 --set mode=cronjob
 
 # explicit RC install (RCs never move latest or the stable X.Y image tag)

@@ -18,8 +18,8 @@ on:
         default: main
 env:
   # Bump when BOMHort's API changes are needed; keep it green on PRs.
-  # BOMHort v0.8.0-rc.3 (cve_id/aliases, dependency_scope, alias-aware VEX matching).
-  BOMHORT_PINNED_REF: 3a1fa24a493f337aea9c57f29eb2b1a7fb2bdf4f
+  # BOMHort v0.8.0 (cve_id/aliases, dependency_scope, alias-aware VEX matching).
+  BOMHORT_PINNED_REF: 84f9bc511cb582c0539542a65c09f162fbf469c2
 permissions:
   contents: read
 concurrency:
