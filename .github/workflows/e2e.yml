@@ -58,7 +58,7 @@ jobs:
           repository: seebom-labs/BOMHort
           ref: ${{ matrix.ref }}
           path: .bomhort
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install govulncheck
