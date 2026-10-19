@@ -6,7 +6,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/openvex/go-vex v0.2.9
 	github.com/seebom-labs/bomhort-go v0.0.0-20261017112401-31ff4d4d2e8a
-	golang.org/x/mod v0.41.0
+	golang.org/x/mod v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
